@@ -1,8 +1,9 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { Building2, Layers, Ruler } from 'lucide-react';
+import { Building2, Layers, Pencil, Ruler } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
 import { DetailList, DetailRow, MetaItem, PageHeader } from '@/components/ui/page';
 import { StatusBadge } from '@/components/ui/status-badge';
@@ -12,6 +13,7 @@ import { UnitPublishControl } from '@/features/units/unit-publish-control';
 import { can, requirePermission } from '@/lib/auth/guard';
 import { formatArea, formatCurrency, formatDate } from '@/lib/format';
 import { getRequestLocale } from '@/lib/locale';
+import { isUuid } from '@/lib/utils';
 import { getUnitDetail, getUnitLeaseHistory, getUnitPriceHistory } from '@/services/unit-service';
 
 export const dynamic = 'force-dynamic';
@@ -23,6 +25,7 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const user = await requirePermission('units:view');
   const { id } = await params;
+  if (!isUuid(id)) notFound();
   const unit = await getUnitDetail(user.organizationId, id);
   return { title: unit ? `Unit ${unit.unitNumber}` : 'Unit' };
 }
@@ -30,6 +33,8 @@ export async function generateMetadata({
 export default async function UnitDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requirePermission('units:view');
   const { id } = await params;
+  // A non-UUID segment must never reach a uuid column query (PostgreSQL 22P02).
+  if (!isUuid(id)) notFound();
   const locale = await getRequestLocale();
 
   const unit = await getUnitDetail(user.organizationId, id);
@@ -61,13 +66,31 @@ export default async function UnitDetailPage({ params }: { params: Promise<{ id:
           </>
         }
         actions={
-          can(user, 'units:publish') ? (
-            <UnitPublishControl
-              unitId={id}
-              publicationState={unit.publicationState}
-              availabilityClass={unit.availabilityClass}
-            />
-          ) : undefined
+          <>
+            {can(user, 'units:edit') ? (
+              <Button variant="secondary" asChild>
+                <Link href={`/units/${id}/edit`}>
+                  <Pencil />
+                  Edit Unit
+                </Link>
+              </Button>
+            ) : null}
+            <Button variant="ghost" asChild>
+              <Link href={`/properties/${unit.propertyId}`}>View Property</Link>
+            </Button>
+            {unit.buildingName ? (
+              <Button variant="ghost" asChild>
+                <Link href={`/properties/${unit.propertyId}?tab=buildings`}>View Building</Link>
+              </Button>
+            ) : null}
+            {can(user, 'units:publish') ? (
+              <UnitPublishControl
+                unitId={id}
+                publicationState={unit.publicationState}
+                availabilityClass={unit.availabilityClass}
+              />
+            ) : null}
+          </>
         }
       />
 
@@ -125,8 +148,8 @@ export default async function UnitDetailPage({ params }: { params: Promise<{ id:
             <CardHeader
               title="Pricing"
               action={
-                can(user, 'pricing:edit') ? (
-                  <Link href={`/units/${id}/pricing`} className="text-[12px] font-medium text-[var(--color-info)] hover:underline">
+                can(user, 'units:edit') ? (
+                  <Link href={`/units/${id}/edit`} className="text-[12px] font-medium text-[var(--color-info)] hover:underline">
                     Edit
                   </Link>
                 ) : null

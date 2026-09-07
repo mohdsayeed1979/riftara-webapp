@@ -13,6 +13,11 @@ import {
   unitStatuses,
   unitTypes,
 } from '@/db/schema';
+import { recordAudit } from '@/lib/audit';
+import { notFound, validationError } from '@/lib/errors';
+import type { DbExecutor } from '@/db/types';
+import type { SessionUser } from '@/lib/auth/session';
+import { computeUnitAvailability } from '@/services/availability-service';
 import { round2 } from '@/lib/utils';
 
 /**
@@ -375,4 +380,261 @@ export async function getUnitAvailabilityCounts(
     leased: Number(row?.leased ?? 0),
     notAvailable: Number(row?.notAvailable ?? 0),
   };
+}
+
+/* ------------------------- Unit master-data writes ------------------------ */
+
+/** Reference data for the New / Edit Unit form. Hierarchy Property -> Building
+ *  -> Floor, all organization-scoped and loaded from the database (never
+ *  hardcoded). Full lists carry parent ids so the form filters on the client
+ *  and the server re-validates. */
+export async function getUnitFormReferenceData(organizationId: string) {
+  const db = await getDb();
+  const [propertyRows, buildingRows, floorRows, typeRows, statusRows] = await Promise.all([
+    db
+      .select({ id: properties.id, name: properties.nameEn })
+      .from(properties)
+      .where(and(eq(properties.organizationId, organizationId), isNull(properties.deletedAt)))
+      .orderBy(asc(properties.nameEn)),
+    db
+      .select({ id: buildings.id, name: buildings.nameEn, propertyId: buildings.propertyId })
+      .from(buildings)
+      .where(and(eq(buildings.organizationId, organizationId), isNull(buildings.deletedAt)))
+      .orderBy(asc(buildings.code)),
+    db
+      .select({ id: floors.id, name: floors.nameEn, buildingId: floors.buildingId, level: floors.level })
+      .from(floors)
+      .where(and(eq(floors.organizationId, organizationId), isNull(floors.deletedAt)))
+      .orderBy(asc(floors.level)),
+    db
+      .select({ id: unitTypes.id, name: unitTypes.nameEn })
+      .from(unitTypes)
+      .where(and(eq(unitTypes.organizationId, organizationId), eq(unitTypes.isActive, true)))
+      .orderBy(asc(unitTypes.sortOrder)),
+    db
+      .select({ id: unitStatuses.id, name: unitStatuses.nameEn, key: unitStatuses.key })
+      .from(unitStatuses)
+      .where(and(eq(unitStatuses.organizationId, organizationId), eq(unitStatuses.isActive, true)))
+      .orderBy(asc(unitStatuses.sortOrder)),
+  ]);
+  return { properties: propertyRows, buildings: buildingRows, floors: floorRows, types: typeRows, statuses: statusRows };
+}
+
+export async function nextUnitCode(organizationId: string): Promise<string> {
+  const db = await getDb();
+  const [{ total }] = await db
+    .select({ total: count() })
+    .from(units)
+    .where(eq(units.organizationId, organizationId));
+  return `UNIT-${String(Number(total) + 1).padStart(4, '0')}`;
+}
+
+export interface UnitWriteInput {
+  propertyId: string;
+  buildingId?: string | null;
+  floorId?: string | null;
+  code: string;
+  unitNumber: string;
+  unitTypeId: string;
+  usageType: string;
+  statusId: string;
+  grossArea?: number | null;
+  netArea?: number | null;
+  leasableArea?: number | null;
+  terraceArea?: number | null;
+  balconyArea?: number | null;
+  storageArea?: number | null;
+  parkingAllocation?: number;
+  roomCount?: number | null;
+  bedroomCount?: number | null;
+  bathroomCount?: number | null;
+  hasKitchen?: boolean;
+  hasMaidRoom?: boolean;
+  hasDriverRoom?: boolean;
+  furnishingStatus?: string;
+  hvacType?: string | null;
+  electricityMeterNumber?: string | null;
+  waterMeterNumber?: string | null;
+  electricityAccount?: string | null;
+  waterAccount?: string | null;
+  condition?: string | null;
+  fitOutStatus?: string;
+  frontage?: number | null;
+  ceilingHeight?: number | null;
+  electricalLoad?: string | null;
+  permittedActivities?: string[];
+  signageRights?: boolean;
+  loadingAccess?: boolean;
+  deliveryAccess?: boolean;
+  fireSystem?: boolean;
+  hvacCapacity?: string | null;
+  utilityCapacity?: string | null;
+  fitOutRequirements?: string | null;
+  availabilityDate?: string | null;
+  descriptionEn?: string | null;
+  descriptionAr?: string | null;
+}
+
+/** Validates the Property -> Building -> Floor chain inside the org and returns
+ *  the resolved building/floor ids (null when not provided). */
+async function resolveHierarchy(
+  tx: DbExecutor,
+  organizationId: string,
+  input: { propertyId: string; buildingId?: string | null; floorId?: string | null },
+): Promise<{ buildingId: string | null; floorId: string | null }> {
+  const [property] = await tx
+    .select({ id: properties.id })
+    .from(properties)
+    .where(and(eq(properties.id, input.propertyId), eq(properties.organizationId, organizationId), isNull(properties.deletedAt)))
+    .limit(1);
+  if (!property) throw notFound('Property', input.propertyId);
+
+  let buildingId: string | null = null;
+  if (input.buildingId) {
+    const [building] = await tx
+      .select({ id: buildings.id })
+      .from(buildings)
+      .where(and(eq(buildings.id, input.buildingId), eq(buildings.organizationId, organizationId), eq(buildings.propertyId, input.propertyId), isNull(buildings.deletedAt)))
+      .limit(1);
+    if (!building) throw validationError('The selected building does not belong to the selected property.');
+    buildingId = building.id;
+  }
+
+  let floorId: string | null = null;
+  if (input.floorId) {
+    if (!buildingId) throw validationError('Select a building before choosing a floor.');
+    const [floor] = await tx
+      .select({ id: floors.id })
+      .from(floors)
+      .where(and(eq(floors.id, input.floorId), eq(floors.organizationId, organizationId), eq(floors.buildingId, buildingId), isNull(floors.deletedAt)))
+      .limit(1);
+    if (!floor) throw validationError('The selected floor does not belong to the selected building.');
+    floorId = floor.id;
+  }
+
+  return { buildingId, floorId };
+}
+
+function unitValues(input: UnitWriteInput, hierarchy: { buildingId: string | null; floorId: string | null }) {
+  return {
+    code: input.code,
+    unitNumber: input.unitNumber,
+    unitTypeId: input.unitTypeId,
+    usageType: input.usageType,
+    statusId: input.statusId,
+    buildingId: hierarchy.buildingId,
+    floorId: hierarchy.floorId,
+    grossArea: input.grossArea ?? null,
+    netArea: input.netArea ?? null,
+    leasableArea: input.leasableArea ?? null,
+    terraceArea: input.terraceArea ?? null,
+    balconyArea: input.balconyArea ?? null,
+    storageArea: input.storageArea ?? null,
+    parkingAllocation: input.parkingAllocation ?? 0,
+    roomCount: input.roomCount ?? null,
+    bedroomCount: input.bedroomCount ?? null,
+    bathroomCount: input.bathroomCount ?? null,
+    hasKitchen: input.hasKitchen ?? false,
+    hasMaidRoom: input.hasMaidRoom ?? false,
+    hasDriverRoom: input.hasDriverRoom ?? false,
+    furnishingStatus: input.furnishingStatus ?? 'unfurnished',
+    hvacType: input.hvacType ?? null,
+    electricityMeterNumber: input.electricityMeterNumber ?? null,
+    waterMeterNumber: input.waterMeterNumber ?? null,
+    electricityAccount: input.electricityAccount ?? null,
+    waterAccount: input.waterAccount ?? null,
+    condition: input.condition ?? null,
+    fitOutStatus: input.fitOutStatus ?? 'shell_core',
+    frontage: input.frontage ?? null,
+    ceilingHeight: input.ceilingHeight ?? null,
+    electricalLoad: input.electricalLoad ?? null,
+    permittedActivities: input.permittedActivities ?? [],
+    signageRights: input.signageRights ?? false,
+    loadingAccess: input.loadingAccess ?? false,
+    deliveryAccess: input.deliveryAccess ?? false,
+    fireSystem: input.fireSystem ?? false,
+    hvacCapacity: input.hvacCapacity ?? null,
+    utilityCapacity: input.utilityCapacity ?? null,
+    fitOutRequirements: input.fitOutRequirements ?? null,
+    availabilityDate: input.availabilityDate ?? null,
+    descriptionEn: input.descriptionEn ?? null,
+    descriptionAr: input.descriptionAr ?? null,
+  };
+}
+
+export async function createUnit(actor: SessionUser, input: UnitWriteInput): Promise<{ id: string }> {
+  const db = await getDb();
+  const created = await db.transaction(async (tx) => {
+    const hierarchy = await resolveHierarchy(tx, actor.organizationId, input);
+    const [row] = await tx
+      .insert(units)
+      .values({
+        organizationId: actor.organizationId, // session org only — never client-supplied
+        propertyId: input.propertyId,
+        ...unitValues(input, hierarchy),
+      })
+      .returning({ id: units.id });
+
+    await recordAudit(tx, {
+      organizationId: actor.organizationId,
+      action: 'create',
+      entityType: 'unit',
+      entityId: row.id,
+      entityLabel: input.unitNumber,
+      newValue: input,
+      actor: { id: actor.id, fullName: actor.fullName },
+    });
+    return row;
+  });
+
+  // Derive availability from the engine (BRD 14) after the write commits — the
+  // engine reads policy on its own connection, so it must run outside the tx.
+  await computeUnitAvailability(db, created.id, actor.organizationId);
+  return created;
+}
+
+export async function updateUnit(actor: SessionUser, unitId: string, input: UnitWriteInput): Promise<{ id: string }> {
+  const db = await getDb();
+  await db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select({ id: units.id, unitNumber: units.unitNumber })
+      .from(units)
+      .where(and(eq(units.id, unitId), eq(units.organizationId, actor.organizationId), isNull(units.deletedAt)))
+      .limit(1);
+    if (!existing) throw notFound('Unit', unitId);
+
+    const hierarchy = await resolveHierarchy(tx, actor.organizationId, input);
+    await tx
+      .update(units)
+      .set({ propertyId: input.propertyId, ...unitValues(input, hierarchy), updatedAt: new Date() })
+      .where(eq(units.id, unitId));
+
+    await recordAudit(tx, {
+      organizationId: actor.organizationId,
+      action: 'update',
+      entityType: 'unit',
+      entityId: unitId,
+      entityLabel: input.unitNumber,
+      previousValue: { unitNumber: existing.unitNumber },
+      newValue: input,
+      actor: { id: actor.id, fullName: actor.fullName },
+    });
+  });
+
+  // Recompute derived availability after the write commits (see createUnit).
+  await computeUnitAvailability(db, unitId, actor.organizationId);
+  return { id: unitId };
+}
+
+/** Full writable unit row + current pricing, for the edit form. */
+export async function getUnitForEdit(organizationId: string, unitId: string) {
+  const db = await getDb();
+  const [unit] = await db
+    .select()
+    .from(units)
+    .where(and(eq(units.id, unitId), eq(units.organizationId, organizationId), isNull(units.deletedAt)))
+    .limit(1);
+  if (!unit) return null;
+  const [pricing] = await db.select().from(unitPricing).where(eq(unitPricing.unitId, unitId)).limit(1);
+  return { unit, pricing: pricing ?? null };
 }

@@ -182,6 +182,13 @@ export default async function PropertyDetailPage({
         propertyId={id}
         activeTab={tab ?? 'overview'}
         locale={locale}
+        management={{
+          organizationId: user.organizationId,
+          canCreateBuilding: can(user, 'buildings:create'),
+          canEditBuilding: can(user, 'buildings:edit'),
+          canDeleteBuilding: can(user, 'buildings:delete'),
+          canCreateUnit: can(user, 'units:create'),
+        }}
         overview={
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <Card>

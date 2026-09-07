@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { Plus } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { and, desc, eq, gte, isNull, sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
@@ -17,7 +18,10 @@ import { Card, CardHeader } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/misc';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Table, TableContainer, TBody, TD, TH, THead, TR } from '@/components/ui/table';
-import { getPropertyBuildings, getPropertyOwnership } from '@/services/property-service';
+import { getPropertyOwnership } from '@/services/property-service';
+import { listBuildingsWithFloors, nextBuildingCode } from '@/services/building-service';
+import { BuildingsPanel } from '@/features/properties/buildings-panel';
+import { Button } from '@/components/ui/button';
 import type { Locale } from '@/i18n/config';
 import { formatArea, formatCompactCurrency, formatDate, formatDateTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -40,16 +44,26 @@ const TABS = [
  * `?tab=` so the panel data is fetched on demand, keeping the initial render
  * light while every tab stays deep-linkable.
  */
+export interface PropertyManagement {
+  organizationId: string;
+  canCreateBuilding: boolean;
+  canEditBuilding: boolean;
+  canDeleteBuilding: boolean;
+  canCreateUnit: boolean;
+}
+
 export async function PropertyTabs({
   propertyId,
   activeTab,
   locale,
   overview,
+  management,
 }: {
   propertyId: string;
   activeTab: string;
   locale: Locale;
   overview: ReactNode;
+  management: PropertyManagement;
 }) {
   return (
     <div>
@@ -81,7 +95,7 @@ export async function PropertyTabs({
         })}
       </nav>
 
-      {activeTab === 'overview' ? overview : <PropertyTabPanel propertyId={propertyId} tab={activeTab} locale={locale} />}
+      {activeTab === 'overview' ? overview : <PropertyTabPanel propertyId={propertyId} tab={activeTab} locale={locale} management={management} />}
     </div>
   );
 }
@@ -90,46 +104,36 @@ async function PropertyTabPanel({
   propertyId,
   tab,
   locale,
+  management,
 }: {
   propertyId: string;
   tab: string;
   locale: Locale;
+  management: PropertyManagement;
 }) {
   const money = (value: number) => formatCompactCurrency(value, { locale });
 
   switch (tab) {
     case 'buildings': {
-      const rows = await getPropertyBuildings(propertyId);
-      if (rows.length === 0) return <EmptyCard title="No buildings" />;
+      const [rows, suggestedCode] = await Promise.all([
+        listBuildingsWithFloors(management.organizationId, propertyId),
+        nextBuildingCode(management.organizationId, propertyId),
+      ]);
       return (
-        <Card>
-          <TableContainer>
-            <Table>
-              <THead>
-                <TR>
-                  <TH>Building</TH>
-                  <TH alignment="end">Floors</TH>
-                  <TH alignment="end">Units</TH>
-                  <TH alignment="end">Leasable Area</TH>
-                  <TH alignment="center">Status</TH>
-                </TR>
-              </THead>
-              <TBody>
-                {rows.map((building) => (
-                  <TR key={building.id}>
-                    <TD className="font-medium">{building.name}</TD>
-                    <TD alignment="end" numeric>{building.floorCount}</TD>
-                    <TD alignment="end" numeric>{building.unitCount}</TD>
-                    <TD alignment="end" numeric>
-                      {building.grossLeasableArea ? formatArea(Number(building.grossLeasableArea), { locale }) : '—'}
-                    </TD>
-                    <TD alignment="center"><StatusBadge status={building.status} /></TD>
-                  </TR>
-                ))}
-              </TBody>
-            </Table>
-          </TableContainer>
-        </Card>
+        <BuildingsPanel
+          propertyId={propertyId}
+          suggestedCode={suggestedCode}
+          buildings={rows.map((b) => ({
+            ...b,
+            grossLeasableArea: b.grossLeasableArea != null ? Number(b.grossLeasableArea) : null,
+            floors: b.floors.map((f) => ({ ...f, grossArea: f.grossArea != null ? Number(f.grossArea) : null })),
+          }))}
+          permissions={{
+            canCreate: management.canCreateBuilding,
+            canEdit: management.canEditBuilding,
+            canDelete: management.canDeleteBuilding,
+          }}
+        />
       );
     }
 
@@ -149,15 +153,43 @@ async function PropertyTabPanel({
         .where(and(eq(units.propertyId, propertyId), isNull(units.deletedAt)))
         .orderBy(units.code)
         .limit(200);
-      if (rows.length === 0) return <EmptyCard title="No units" />;
+      if (rows.length === 0)
+        return (
+          <Card>
+            <EmptyState
+              title="No units"
+              description="Add a unit to this property to start building inventory."
+              action={
+                management.canCreateUnit ? (
+                  <Button asChild>
+                    <Link href={`/units/new?propertyId=${propertyId}`}>
+                      <Plus />
+                      Add Unit
+                    </Link>
+                  </Button>
+                ) : undefined
+              }
+            />
+          </Card>
+        );
       return (
         <Card>
           <CardHeader
             title="Units"
             action={
-              <Link href={`/units?propertyId=${propertyId}`} className="text-[12px] font-medium text-[var(--color-info)] hover:underline">
-                Open in inventory
-              </Link>
+              <div className="flex items-center gap-3">
+                {management.canCreateUnit ? (
+                  <Button size="sm" asChild>
+                    <Link href={`/units/new?propertyId=${propertyId}`}>
+                      <Plus />
+                      Add Unit
+                    </Link>
+                  </Button>
+                ) : null}
+                <Link href={`/units?propertyId=${propertyId}`} className="text-[12px] font-medium text-[var(--color-info)] hover:underline">
+                  Open in inventory
+                </Link>
+              </div>
             }
           />
           <TableContainer>

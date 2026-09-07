@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { Ban, Download, FileText, KeyRound, LayoutGrid, Clock } from 'lucide-react';
+import { Ban, Download, FileText, KeyRound, LayoutGrid, Clock, Pencil, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { FilterBar } from '@/components/app/filter-bar';
@@ -69,14 +69,24 @@ export default async function UnitsPage({
         title="Units"
         subtitle="Unit inventory, availability and pricing across the portfolio."
         actions={
-          can(user, 'units:export') ? (
-            <Button variant="secondary" asChild>
-              <a href={`/api/v1/units/export?${new URLSearchParams(params as Record<string, string>).toString()}`}>
-                <Download />
-                Export
-              </a>
-            </Button>
-          ) : undefined
+          <>
+            {can(user, 'units:create') ? (
+              <Button asChild>
+                <Link href="/units/new">
+                  <Plus />
+                  Add Unit
+                </Link>
+              </Button>
+            ) : null}
+            {can(user, 'units:export') ? (
+              <Button variant="secondary" asChild>
+                <a href={`/api/v1/units/export?${new URLSearchParams(params as Record<string, string>).toString()}`}>
+                  <Download />
+                  Export
+                </a>
+              </Button>
+            ) : null}
+          </>
         }
       />
 
@@ -152,7 +162,17 @@ export default async function UnitsPage({
           <EmptyState
             icon={<LayoutGrid />}
             title="No units found"
-            description="Try adjusting your filters to see units in the inventory."
+            description="Try adjusting your filters, or add a unit to the inventory."
+            action={
+              can(user, 'units:create') ? (
+                <Button asChild>
+                  <Link href="/units/new">
+                    <Plus />
+                    Add Unit
+                  </Link>
+                </Button>
+              ) : undefined
+            }
           />
         ) : (
           <>
@@ -169,6 +189,7 @@ export default async function UnitsPage({
                     <TH>Tenant</TH>
                     <TH alignment="end">Available From</TH>
                     <TH alignment="center">Status</TH>
+                    <TH alignment="end">Actions</TH>
                   </TR>
                 </THead>
                 <TBody>
@@ -206,6 +227,17 @@ export default async function UnitsPage({
                       </TD>
                       <TD alignment="center">
                         <StatusBadge status={unit.statusKey} label={unit.statusLabel} />
+                      </TD>
+                      <TD alignment="end" className="whitespace-nowrap">
+                        <Link href={`/units/${unit.id}`} className="text-[12px] font-medium text-[var(--color-info)] hover:underline">
+                          View
+                        </Link>
+                        {can(user, 'units:edit') ? (
+                          <Link href={`/units/${unit.id}/edit`} className="ms-3 inline-flex items-center gap-1 text-[12px] font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]">
+                            <Pencil className="size-3" />
+                            Edit
+                          </Link>
+                        ) : null}
                       </TD>
                     </TR>
                   ))}
