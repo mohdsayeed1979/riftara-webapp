@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { and, desc, eq } from 'drizzle-orm';
-import { Briefcase, User } from 'lucide-react';
+import { Briefcase, Pencil, User } from 'lucide-react';
 import { getDb } from '@/db/client';
 import { collectionActions, contracts, customers, properties, tenants, units, users } from '@/db/schema';
 import { Button } from '@/components/ui/button';
@@ -16,6 +16,7 @@ import { can, requirePermission } from '@/lib/auth/guard';
 import { formatCurrency, formatDate, formatDateTime } from '@/lib/format';
 import { getRequestLocale } from '@/lib/locale';
 import { getTenantLedger } from '@/services/collection-service';
+import { isUuid } from '@/lib/utils';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Tenant' };
@@ -23,6 +24,7 @@ export const metadata: Metadata = { title: 'Tenant' };
 export default async function TenantDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requirePermission('tenants:view');
   const { id } = await params;
+  if (!isUuid(id)) notFound();
   const locale = await getRequestLocale();
   const db = await getDb();
 
@@ -90,6 +92,14 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
         }
         actions={
           <>
+            {can(user, 'tenants:edit') ? (
+              <Button variant="secondary" asChild>
+                <Link href={`/tenants/${id}/edit`}>
+                  <Pencil />
+                  Edit Tenant
+                </Link>
+              </Button>
+            ) : null}
             <Button variant="secondary" asChild>
               <Link href={`/leasing/customers/${tenant.customerId}`}>
                 <User />

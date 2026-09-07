@@ -71,6 +71,7 @@ export const en = {
     properties: 'Properties',
     units: 'Units',
     leasingCrm: 'Leasing CRM',
+    customers: 'Customers',
     contracts: 'Contracts',
     collections: 'Collections',
     maintenance: 'Maintenance',

@@ -78,6 +78,14 @@ export const NAV_GROUPS: NavGroup[] = [
         matches: ['/leasing'],
       },
       {
+        key: 'customers',
+        href: '/leasing/customers',
+        labelKey: 'nav.customers',
+        icon: UsersRound,
+        permission: 'customers:view',
+        matches: ['/leasing/customers'],
+      },
+      {
         key: 'contracts',
         href: '/contracts',
         labelKey: 'nav.contracts',

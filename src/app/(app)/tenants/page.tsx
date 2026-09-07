@@ -1,17 +1,18 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { and, count, desc, eq, ilike, isNull, sql } from 'drizzle-orm';
-import { Users } from 'lucide-react';
+import { Pencil, Plus, Users } from 'lucide-react';
 import { getDb } from '@/db/client';
-import { tenants } from '@/db/schema';
+import { customers, tenants } from '@/db/schema';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { FilterBar } from '@/components/app/filter-bar';
 import { EmptyState } from '@/components/ui/misc';
 import { PageHeader } from '@/components/ui/page';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Pagination, Table, TableContainer, TBody, TD, TH, THead, TR } from '@/components/ui/table';
-import { requirePermission } from '@/lib/auth/guard';
+import { can, requirePermission } from '@/lib/auth/guard';
 import { formatCompactCurrency } from '@/lib/format';
 import { getRequestLocale } from '@/lib/locale';
 
@@ -58,11 +59,14 @@ export default async function TenantsPage({
         industry: tenants.industry,
         status: tenants.status,
         creditRating: tenants.creditRating,
+        customerId: tenants.customerId,
+        customerName: customers.fullNameEn,
         activeContracts,
         totalRent,
         outstanding,
       })
       .from(tenants)
+      .innerJoin(customers, eq(customers.id, tenants.customerId))
       .where(where)
       .orderBy(desc(totalRent))
       .limit(PAGE_SIZE)
@@ -82,7 +86,20 @@ export default async function TenantsPage({
 
   return (
     <div className="flex flex-col gap-5">
-      <PageHeader title="Tenants" subtitle="Active and former tenants across the portfolio." />
+      <PageHeader
+        title="Tenants"
+        subtitle="Active and former tenants across the portfolio."
+        actions={
+          can(user, 'tenants:create') ? (
+            <Button asChild>
+              <Link href="/tenants/new">
+                <Plus />
+                Add Tenant
+              </Link>
+            </Button>
+          ) : undefined
+        }
+      />
 
       <FilterBar
         searchPlaceholder="Search tenants by name..."
@@ -101,7 +118,21 @@ export default async function TenantsPage({
 
       <Card>
         {rows.length === 0 ? (
-          <EmptyState icon={<Users />} title="No tenants found" description="Tenants appear here once contracts are signed." />
+          <EmptyState
+            icon={<Users />}
+            title="No tenants found"
+            description="Create a tenant leasing account from an existing customer."
+            action={
+              can(user, 'tenants:create') ? (
+                <Button asChild>
+                  <Link href="/tenants/new">
+                    <Plus />
+                    Add Tenant
+                  </Link>
+                </Button>
+              ) : undefined
+            }
+          />
         ) : (
           <>
             <TableContainer>
@@ -109,12 +140,14 @@ export default async function TenantsPage({
                 <THead>
                   <TR>
                     <TH>Tenant</TH>
+                    <TH>Customer</TH>
                     <TH>Industry</TH>
                     <TH alignment="end">Active Contracts</TH>
                     <TH alignment="end">Annual Rent</TH>
                     <TH alignment="end">Outstanding</TH>
                     <TH alignment="center">Credit</TH>
                     <TH alignment="center">Status</TH>
+                    <TH alignment="end">Actions</TH>
                   </TR>
                 </THead>
                 <TBody>
@@ -126,6 +159,11 @@ export default async function TenantsPage({
                         </Link>
                         <span className="block text-[11px] text-[var(--color-text-tertiary)]">{tenant.code}</span>
                       </TD>
+                      <TD className="text-[var(--color-text-secondary)]">
+                        <Link href={`/leasing/customers/${tenant.customerId}`} className="hover:text-[var(--color-info)]">
+                          {tenant.customerName}
+                        </Link>
+                      </TD>
                       <TD className="text-[var(--color-text-secondary)]">{tenant.industry ?? '—'}</TD>
                       <TD alignment="end" numeric>{Number(tenant.activeContracts)}</TD>
                       <TD alignment="end" numeric>{formatCompactCurrency(Number(tenant.totalRent), { locale })}</TD>
@@ -136,6 +174,14 @@ export default async function TenantsPage({
                         {tenant.creditRating ? <Badge tone={tenant.creditRating === 'A' ? 'success' : tenant.creditRating === 'B' ? 'warning' : 'error'}>{tenant.creditRating}</Badge> : '—'}
                       </TD>
                       <TD alignment="center"><StatusBadge status={tenant.status} /></TD>
+                      <TD alignment="end" className="whitespace-nowrap">
+                        <Link href={`/tenants/${tenant.id}`} className="text-[12px] font-medium text-[var(--color-info)] hover:underline">View</Link>
+                        {can(user, 'tenants:edit') ? (
+                          <Link href={`/tenants/${tenant.id}/edit`} className="ms-3 inline-flex items-center gap-1 text-[12px] font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]">
+                            <Pencil className="size-3" />Edit
+                          </Link>
+                        ) : null}
+                      </TD>
                     </TR>
                   ))}
                 </TBody>

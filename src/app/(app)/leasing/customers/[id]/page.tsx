@@ -4,8 +4,10 @@ import { notFound } from 'next/navigation';
 import {
   Mail,
   MessageCircle,
+  Pencil,
   Phone,
   Tag,
+  UserPlus,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -14,7 +16,8 @@ import { Avatar, EmptyState } from '@/components/ui/misc';
 import { DetailList, DetailRow, PageHeader } from '@/components/ui/page';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { ActivityTimeline } from '@/features/leasing/activity-timeline';
-import { requirePermission } from '@/lib/auth/guard';
+import { can, requirePermission } from '@/lib/auth/guard';
+import { isUuid } from '@/lib/utils';
 import { formatCurrency, formatDate } from '@/lib/format';
 import { getRequestLocale } from '@/lib/locale';
 import { getCustomer360 } from '@/services/customer-service';
@@ -28,6 +31,7 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const user = await requirePermission('customers:view');
   const { id } = await params;
+  if (!isUuid(id)) return { title: 'Customer' };
   try {
     const { customer } = await getCustomer360(user.organizationId, id);
     return { title: customer.fullNameEn };
@@ -39,6 +43,7 @@ export async function generateMetadata({
 export default async function Customer360Page({ params }: { params: Promise<{ id: string }> }) {
   const user = await requirePermission('customers:view');
   const { id } = await params;
+  if (!isUuid(id)) notFound();
   const locale = await getRequestLocale();
 
   let data;
@@ -78,6 +83,26 @@ export default async function Customer360Page({ params }: { params: Promise<{ id
         }
         actions={
           <>
+            {can(user, 'customers:edit') ? (
+              <Button variant="secondary" size="sm" asChild>
+                <Link href={`/leasing/customers/${id}/edit`}>
+                  <Pencil />
+                  Edit
+                </Link>
+              </Button>
+            ) : null}
+            {tenantId ? (
+              <Button variant="secondary" size="sm" asChild>
+                <Link href={`/tenants/${tenantId}`}>View Tenant</Link>
+              </Button>
+            ) : can(user, 'tenants:create') ? (
+              <Button variant="secondary" size="sm" asChild>
+                <Link href={`/tenants/new?customerId=${id}`}>
+                  <UserPlus />
+                  Add Tenant
+                </Link>
+              </Button>
+            ) : null}
             {customer.email ? (
               <Button variant="secondary" size="sm" asChild>
                 <a href={`mailto:${customer.email}`}>

@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, count, desc, eq, isNull, or } from 'drizzle-orm';
+import { and, count, desc, eq, ilike, isNull, or, sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import {
   customerIdentifiers,
@@ -105,12 +105,27 @@ export interface CreateCustomerInput {
   fullNameAr?: string | null;
   companyName?: string | null;
   mobile?: string | null;
+  alternateMobile?: string | null;
   email?: string | null;
   nationalId?: string | null;
+  nationalIdExpiry?: string | null;
   iqama?: string | null;
+  iqamaExpiry?: string | null;
   commercialRegistration?: string | null;
+  commercialRegistrationExpiry?: string | null;
   nationality?: string | null;
+  employer?: string | null;
+  monthlyIncome?: number | null;
   businessActivity?: string | null;
+  unifiedNumber?: string | null;
+  vatNumber?: string | null;
+  authorizedRepresentative?: string | null;
+  addressLine?: string | null;
+  notes?: string | null;
+  priority?: string | null;
+  tags?: string[];
+  marketingConsent?: boolean;
+  communicationConsent?: boolean;
 }
 
 export interface CreateCustomerResult {
@@ -155,18 +170,36 @@ export async function createCustomerWithDeduplication(
         fullNameAr: input.fullNameAr ?? null,
         companyName: input.companyName ?? null,
         mobile: input.mobile ?? null,
+        alternateMobile: input.alternateMobile ?? null,
         email: input.email ?? null,
         nationality: input.nationality ?? null,
+        employer: input.employer ?? null,
+        monthlyIncome: input.monthlyIncome ?? null,
         businessActivity: input.businessActivity ?? null,
+        unifiedNumber: input.unifiedNumber ?? null,
+        vatNumber: input.vatNumber ?? null,
+        authorizedRepresentative: input.authorizedRepresentative ?? null,
+        addressLine: input.addressLine ?? null,
+        notes: input.notes ?? null,
+        priority: input.priority ?? 'medium',
+        tags: input.tags ?? [],
+        marketingConsent: input.marketingConsent ?? false,
+        communicationConsent: input.communicationConsent ?? true,
         ownerUserId: actor.id,
       })
       .returning({ id: customers.id });
 
+    const expiryByType: Record<string, string | null | undefined> = {
+      national_id: input.nationalIdExpiry,
+      iqama: input.iqamaExpiry,
+      commercial_registration: input.commercialRegistrationExpiry,
+    };
     const identifierRows = Object.entries(identifiers).map(([type, value], index) => ({
       organizationId: actor.organizationId,
       customerId: created.id,
       identifierType: type,
       identifierValue: normalizeIdentifierValue(type, value),
+      expiryDate: expiryByType[type] ?? null,
       isPrimary: index === 0,
     }));
     if (identifierRows.length > 0) {
@@ -291,4 +324,215 @@ export async function getCustomer360(organizationId: string, customerId: string)
     activities,
     tenantId: tenantRecord[0]?.id ?? null,
   };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Customer list + edit                                                        */
+/* -------------------------------------------------------------------------- */
+
+export interface CustomerListFilters {
+  organizationId: string;
+  search?: string;
+  customerType?: string;
+  priority?: string;
+  page: number;
+  pageSize: number;
+}
+
+export interface CustomerListItem {
+  id: string;
+  code: string;
+  customerType: string;
+  fullNameEn: string;
+  companyName: string | null;
+  mobile: string | null;
+  email: string | null;
+  priority: string;
+  identification: string | null;
+  activeContracts: number;
+  hasTenant: boolean;
+  createdAt: Date;
+}
+
+export async function listCustomers(
+  filters: CustomerListFilters,
+): Promise<{ items: CustomerListItem[]; total: number }> {
+  const db = await getDb();
+  const where = and(
+    eq(customers.organizationId, filters.organizationId),
+    isNull(customers.deletedAt),
+    filters.customerType ? eq(customers.customerType, filters.customerType as 'individual' | 'corporate') : undefined,
+    filters.priority ? eq(customers.priority, filters.priority) : undefined,
+    filters.search
+      ? or(
+          ilike(customers.fullNameEn, `%${filters.search}%`),
+          ilike(customers.companyName, `%${filters.search}%`),
+          ilike(customers.mobile, `%${filters.search}%`),
+          ilike(customers.email, `%${filters.search}%`),
+          ilike(customers.code, `%${filters.search}%`),
+        )
+      : undefined,
+  );
+
+  const activeContracts = sql<number>`(
+    select count(*)::int from contracts c
+    join tenants t on t.id = c.tenant_id
+    where t.customer_id = customers.id and c.is_active = true
+  )`;
+  const hasTenant = sql<boolean>`exists (
+    select 1 from tenants t where t.customer_id = customers.id and t.deleted_at is null
+  )`;
+  const identification = sql<string | null>`(
+    select ci.identifier_type || ':' || ci.identifier_value from customer_identifiers ci
+    where ci.customer_id = customers.id
+      and ci.identifier_type in ('national_id','iqama','commercial_registration')
+    order by ci.is_primary desc limit 1
+  )`;
+
+  const [rows, totalRow] = await Promise.all([
+    db
+      .select({
+        id: customers.id,
+        code: customers.code,
+        customerType: customers.customerType,
+        fullNameEn: customers.fullNameEn,
+        companyName: customers.companyName,
+        mobile: customers.mobile,
+        email: customers.email,
+        priority: customers.priority,
+        identification,
+        activeContracts,
+        hasTenant,
+        createdAt: customers.createdAt,
+      })
+      .from(customers)
+      .where(where)
+      .orderBy(desc(customers.createdAt))
+      .limit(filters.pageSize)
+      .offset((filters.page - 1) * filters.pageSize),
+    db.select({ total: count() }).from(customers).where(where),
+  ]);
+
+  return {
+    items: rows.map((r) => ({
+      ...r,
+      activeContracts: Number(r.activeContracts),
+      hasTenant: Boolean(r.hasTenant),
+    })),
+    total: Number(totalRow[0]?.total ?? 0),
+  };
+}
+
+/** Customer scalar fields + identifiers, for the edit form. */
+export async function getCustomerForEdit(organizationId: string, customerId: string) {
+  const db = await getDb();
+  const [customer] = await db
+    .select()
+    .from(customers)
+    .where(and(eq(customers.id, customerId), eq(customers.organizationId, organizationId), isNull(customers.deletedAt)))
+    .limit(1);
+  if (!customer) return null;
+  const identifiers = await db
+    .select()
+    .from(customerIdentifiers)
+    .where(eq(customerIdentifiers.customerId, customerId));
+  return { customer, identifiers };
+}
+
+async function syncIdentifier(
+  tx: DbExecutor,
+  organizationId: string,
+  customerId: string,
+  type: string,
+  rawValue: string | null | undefined,
+  expiry: string | null | undefined,
+) {
+  const [existing] = await tx
+    .select({ id: customerIdentifiers.id })
+    .from(customerIdentifiers)
+    .where(and(eq(customerIdentifiers.customerId, customerId), eq(customerIdentifiers.identifierType, type)))
+    .limit(1);
+
+  if (!rawValue) {
+    if (existing) await tx.delete(customerIdentifiers).where(eq(customerIdentifiers.id, existing.id));
+    return;
+  }
+  const value = normalizeIdentifierValue(type, rawValue);
+  if (existing) {
+    await tx
+      .update(customerIdentifiers)
+      .set({ identifierValue: value, expiryDate: expiry ?? null })
+      .where(eq(customerIdentifiers.id, existing.id));
+  } else {
+    await tx.insert(customerIdentifiers).values({
+      organizationId,
+      customerId,
+      identifierType: type,
+      identifierValue: value,
+      expiryDate: expiry ?? null,
+    });
+  }
+}
+
+export async function updateCustomer(
+  actor: SessionUser,
+  customerId: string,
+  input: CreateCustomerInput,
+): Promise<{ id: string }> {
+  const db = await getDb();
+  return db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select()
+      .from(customers)
+      .where(and(eq(customers.id, customerId), eq(customers.organizationId, actor.organizationId), isNull(customers.deletedAt)))
+      .limit(1);
+    if (!existing) throw notFound('Customer', customerId);
+
+    await tx
+      .update(customers)
+      .set({
+        customerType: input.customerType,
+        fullNameEn: input.fullNameEn,
+        fullNameAr: input.fullNameAr ?? null,
+        companyName: input.companyName ?? null,
+        mobile: input.mobile ?? null,
+        alternateMobile: input.alternateMobile ?? null,
+        email: input.email ?? null,
+        nationality: input.nationality ?? null,
+        employer: input.employer ?? null,
+        monthlyIncome: input.monthlyIncome ?? null,
+        businessActivity: input.businessActivity ?? null,
+        unifiedNumber: input.unifiedNumber ?? null,
+        vatNumber: input.vatNumber ?? null,
+        authorizedRepresentative: input.authorizedRepresentative ?? null,
+        addressLine: input.addressLine ?? null,
+        notes: input.notes ?? null,
+        priority: input.priority ?? existing.priority,
+        tags: input.tags ?? existing.tags,
+        marketingConsent: input.marketingConsent ?? existing.marketingConsent,
+        communicationConsent: input.communicationConsent ?? existing.communicationConsent,
+        updatedAt: new Date(),
+      })
+      .where(eq(customers.id, customerId));
+
+    // Keep identifier rows in sync (BR-007 unique — collisions surface as a
+    // friendly conflict via translateDatabaseError in the action).
+    await syncIdentifier(tx, actor.organizationId, customerId, 'mobile', input.mobile, null);
+    await syncIdentifier(tx, actor.organizationId, customerId, 'email', input.email, null);
+    await syncIdentifier(tx, actor.organizationId, customerId, 'national_id', input.nationalId, input.nationalIdExpiry);
+    await syncIdentifier(tx, actor.organizationId, customerId, 'iqama', input.iqama, input.iqamaExpiry);
+    await syncIdentifier(tx, actor.organizationId, customerId, 'commercial_registration', input.commercialRegistration, input.commercialRegistrationExpiry);
+
+    await recordAudit(tx, {
+      organizationId: actor.organizationId,
+      action: 'update',
+      entityType: 'customer',
+      entityId: customerId,
+      entityLabel: input.fullNameEn,
+      previousValue: { fullNameEn: existing.fullNameEn, customerType: existing.customerType },
+      newValue: { customerType: input.customerType },
+      actor: { id: actor.id, fullName: actor.fullName },
+    });
+    return { id: customerId };
+  });
 }
