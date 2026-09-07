@@ -1,0 +1,244 @@
+@import 'tailwindcss';
+
+/* ==========================================================================
+   RIFTARA Design System v1.0
+   Tokens transcribed from RIFTARA_UI_UX_Design_Package.pdf (section 02).
+   Every colour, type step and spacing value in the application resolves to a
+   token defined here — no component hard-codes a hex value.
+   ========================================================================== */
+
+@theme {
+  /* --- Brand ----------------------------------------------------------- */
+  --color-espresso-50: #f6f3f0;
+  --color-espresso-100: #e9e2db;
+  --color-espresso-200: #d2c4b7;
+  --color-espresso-300: #b09a86;
+  --color-espresso-400: #8a705c;
+  --color-espresso-500: #6b543f;
+  --color-espresso-600: #55412f;
+  --color-espresso-700: #453425;
+  --color-espresso-800: #3a2b1f;
+  --color-espresso-900: #2e211a;
+  --color-espresso-950: #1f1712;
+
+  --color-gold-50: #fbf8f1;
+  --color-gold-100: #f4ecda;
+  --color-gold-200: #e9d8b4;
+  --color-gold-300: #dcc08c;
+  --color-gold-400: #c9a96a;
+  --color-gold-500: #b8934f;
+  --color-gold-600: #9d7940;
+  --color-gold-700: #7d5f36;
+  --color-gold-800: #654d31;
+  --color-gold-900: #55402b;
+
+  /* --- Semantic surfaces ----------------------------------------------- */
+  --color-primary: #3a2b1f;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #6b543f;
+  --color-brand-gold: #c9a96a;
+
+  --color-canvas: #faf8f3;
+  --color-surface: #ffffff;
+  --color-surface-alt: #f4efe8;
+  --color-surface-muted: #f6f3ed;
+
+  --color-text-primary: #1f1a16;
+  --color-text-secondary: #6b6b68;
+  --color-text-tertiary: #96938d;
+  --color-text-inverse: #faf8f3;
+
+  --color-border-base: #e6e0d8;
+  --color-border-strong: #d5cbbe;
+  --color-border-subtle: #efeae2;
+
+  /* --- Feedback -------------------------------------------------------- */
+  --color-success: #16a34a;
+  --color-success-soft: #eaf7ef;
+  --color-success-border: #bfe6cd;
+  --color-warning: #f59e0b;
+  --color-warning-soft: #fef5e7;
+  --color-warning-border: #f8dfae;
+  --color-error: #ef4444;
+  --color-error-soft: #fdeeee;
+  --color-error-border: #f7c6c6;
+  --color-info: #6366f1;
+  --color-info-soft: #eeeefd;
+  --color-info-border: #c8c9f8;
+  --color-neutral: #6b6b68;
+  --color-neutral-soft: #f2f1ee;
+  --color-neutral-border: #dedcd6;
+
+  /* --- Unit status palette (BRD 13) ------------------------------------ */
+  --color-status-available: #16a34a;
+  --color-status-available-soft: #eaf7ef;
+  --color-status-reserved: #f59e0b;
+  --color-status-reserved-soft: #fef5e7;
+  --color-status-leased: #6366f1;
+  --color-status-leased-soft: #eeeefd;
+  --color-status-maintenance: #ef4444;
+  --color-status-maintenance-soft: #fdeeee;
+  --color-status-blocked: #6b6b68;
+  --color-status-blocked-soft: #f2f1ee;
+
+  /* --- Sidebar --------------------------------------------------------- */
+  --color-sidebar: #2e211a;
+  --color-sidebar-hover: #40302479;
+  --color-sidebar-active: #4b382a;
+  --color-sidebar-foreground: #d9cfc4;
+  --color-sidebar-foreground-active: #f7f2ea;
+  --color-sidebar-border: #45342750;
+
+  /* --- Chart series (data-viz safe, sequential by hue) ------------------ */
+  --color-chart-1: #16a34a;
+  --color-chart-2: #6366f1;
+  --color-chart-3: #c9a96a;
+  --color-chart-4: #f59e0b;
+  --color-chart-5: #0ea5e9;
+  --color-chart-6: #8a705c;
+  --color-chart-7: #ef4444;
+  --color-chart-8: #14b8a6;
+
+  /* --- Typography ------------------------------------------------------ */
+  --font-sans: var(--font-inter), 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
+    sans-serif;
+  --font-arabic: var(--font-noto-arabic), 'Noto Sans Arabic', 'Segoe UI', ui-sans-serif, sans-serif;
+  --font-serif: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif;
+
+  --text-display: 3.5rem; /* H1 56 / 64 */
+  --text-display--line-height: 4rem;
+  --text-display--font-weight: 700;
+  --text-h1: 2.5rem; /* H2 40 / 48 */
+  --text-h1--line-height: 3rem;
+  --text-h1--font-weight: 600;
+  --text-h2: 1.75rem; /* H3 28 / 36 */
+  --text-h2--line-height: 2.25rem;
+  --text-h2--font-weight: 600;
+  --text-h3: 1.25rem; /* H4 20 / 28 */
+  --text-h3--line-height: 1.75rem;
+  --text-h3--font-weight: 500;
+  --text-body-lg: 1rem;
+  --text-body-lg--line-height: 1.5rem;
+  --text-body: 0.875rem;
+  --text-body--line-height: 1.25rem;
+  --text-body-sm: 0.75rem;
+  --text-body-sm--line-height: 1rem;
+  --text-caption: 0.75rem;
+  --text-caption--line-height: 1rem;
+  --text-caption--font-weight: 500;
+
+  /* --- Radius / elevation --------------------------------------------- */
+  --radius-card: 0.875rem;
+  --radius-control: 0.5rem;
+  --radius-pill: 9999px;
+
+  --shadow-card: 0 1px 2px rgb(31 26 22 / 0.04), 0 1px 3px rgb(31 26 22 / 0.04);
+  --shadow-card-hover: 0 4px 10px rgb(31 26 22 / 0.07), 0 2px 4px rgb(31 26 22 / 0.04);
+  --shadow-overlay: 0 16px 40px rgb(31 26 22 / 0.16), 0 4px 12px rgb(31 26 22 / 0.08);
+  --shadow-sidebar: 2px 0 12px rgb(31 26 22 / 0.1);
+}
+
+/* ==========================================================================
+   Base
+   ========================================================================== */
+
+@layer base {
+  * {
+    border-color: var(--color-border-base);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-text-primary);
+    font-family: var(--font-sans);
+    font-size: var(--text-body);
+    line-height: var(--text-body--line-height);
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'tnum' 0;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Arabic uses a dedicated face; the RTL flip is handled by logical properties. */
+  html[lang='ar'] body {
+    font-family: var(--font-arabic);
+  }
+
+  /* Financial figures always align in columns. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-brand-gold);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  ::selection {
+    background-color: var(--color-gold-200);
+    color: var(--color-espresso-900);
+  }
+
+  /* Scrollbars tuned to the warm palette rather than the OS default. */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--color-border-strong);
+    border-radius: 9999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-text-tertiary);
+    background-clip: content-box;
+  }
+}
+
+@layer utilities {
+  .surface-card {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border-base);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
+  }
+
+  /* Mirrors icons that encode direction (arrows, chevrons) under RTL. */
+  [dir='rtl'] .rtl-flip {
+    transform: scaleX(-1);
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #ffffff;
+  }
+}

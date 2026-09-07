@@ -1,0 +1,98 @@
+# User Guide
+
+A module-by-module tour. Sign in at `/login`; on the demo build, pick a role
+from the account list (password `Riftara#2025`).
+
+## Navigation
+The dark sidebar groups modules (Portfolio, Leasing, Finance, Operations,
+Insight, Administration). The top bar has global search (⌘K), a location filter,
+language switch (English/العربية), the notification center and your profile
+menu. Items you lack permission for are hidden.
+
+## Dashboard
+Your executive overview: unit-status KPIs, financial KPIs (portfolio value,
+revenue, collections, NOI, occupancy), a **Requires attention** panel of
+threshold exceptions, occupancy/collection/value charts, the Units-by-City map,
+and Properties Performance / Recent Leads / Upcoming Renewals / Maintenance
+tables. Every KPI card and row is clickable and drills into the underlying
+records. Use the period selector to change the reporting window.
+
+## Properties
+Grid or list view with search, filters (city, type, status) and export. KPI
+strip summarizes the portfolio. Open a property for tabs: Overview, Buildings,
+Units, Leasing, Financial, Valuation, Expenses, Ownership, Documents, Audit.
+
+## Units
+Full inventory filtered by property, type, availability and status. Availability
+is **computed** by the engine (from contracts, notice, reservations, maintenance
+and turnaround), not just the manual status. Open a unit for its specs, pricing,
+availability, lease history and append-only **price history**. With permission
+you can publish/unpublish to the website (blocked for ineligible statuses).
+
+## Leasing CRM
+**Pipeline** (Kanban) — drag a lead between stages; moving to *Lost* requires a
+loss reason. **List** view for filtering. Open a lead for its requirement,
+activity timeline and to log follow-ups (keeping a next action). **Customer 360**
+shows the complete customer picture: profile, identifiers, leads, viewings,
+proposals, reservations and communication timeline. Duplicate customers are
+detected on mobile/email/ID/CR and linked, never duplicated.
+
+## Contracts
+Lease contracts from draft to renewal, with Ejar reference fields. Open a
+contract to see terms, collection summary and the payment schedule. **Sign &
+Activate** sets the unit to *Leased*, generates the payment schedule and issues
+due invoices — this is irreversible and confirms first.
+
+## Collections
+Receivables dashboard: billed/collected/outstanding/overdue KPIs, aging
+analysis, collection trend and top overdue tenants. **Record Payment** allocates
+oldest-invoice-first and reports any unallocated remainder. The overdue-invoice
+table supports export. A tenant's **ledger** (statement of account) is on the
+tenant page.
+
+## Tenants
+Active/former tenants with contracts, outstanding balances and credit rating.
+The tenant page shows contracts, the full ledger and collection-action history.
+
+## Maintenance
+Work-order operations with SLA tracking, work-order trend, status donut, vendor
+performance and upcoming preventive maintenance. Open a work order for details,
+SLA performance and cost records (which roll up into property OPEX and NOI).
+
+## Assets
+Operational equipment register (elevators, chillers, generators, pumps, fire
+panels, CCTV, access control) with warranty, service schedule and lifetime cost.
+
+## Financials
+Portfolio revenue, OPEX, NOI and yield, with NOI/OPEX trend and OPEX by
+category. Sub-pages: Operating Expenses, Valuations, Budget vs Actual.
+
+## Reports
+Choose a report type, period and scope, add optional commentary, and **Generate
+Report** to download a branded PDF (KPIs, financials, occupancy, collections &
+aging, maintenance, property ranking, tenant concentration, key risks,
+management actions). Generated reports are listed and re-downloadable from their
+frozen snapshot.
+
+## Marketing
+Attribution across channels: spend, leads, CPL, ROAS, leads-by-channel, trend
+and campaign performance.
+
+## Integrations
+The Integration Hub shows each connector's real status — **Not Connected**,
+**Configuration Required**, **Connected** or **Error** — derived from whether its
+credentials are configured. Status is never faked.
+
+## Users & Permissions
+Users with their roles, data scope and last login. **Roles** shows each role's
+permission and user counts; **Permissions** shows the full role × permission
+matrix.
+
+## Settings
+Business rules and their enforcement, configurable thresholds (approvals, SLA,
+aging, reservation validity, KPI thresholds…), taxonomies, unit statuses and the
+lead pipeline — all editable without a code change.
+
+## Language
+Switch to العربية from the top bar; the entire interface mirrors to RTL with the
+Arabic font.

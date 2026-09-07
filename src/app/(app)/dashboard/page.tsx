@@ -1,0 +1,596 @@
+import type { Metadata } from 'next';
+import Link from 'next/link';
+import {
+  ArrowRight,
+  Ban,
+  Building2,
+  CalendarDays,
+  CircleDollarSign,
+  ClipboardCheck,
+  Clock,
+  FileText,
+  KeyRound,
+  Plus,
+  ReceiptText,
+  TrendingUp,
+  Wrench,
+} from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardHeader } from '@/components/ui/card';
+import { KpiCard } from '@/components/ui/kpi-card';
+import { EmptyState } from '@/components/ui/misc';
+import { KpiGrid, PageHeader } from '@/components/ui/page';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { Table, TableContainer, TBody, TD, TH, THead, TR } from '@/components/ui/table';
+import { DashboardCharts } from '@/features/dashboard/dashboard-charts';
+import { PeriodSelector } from '@/features/dashboard/period-selector';
+import { ExceptionsPanel } from '@/features/dashboard/exceptions-panel';
+import { requirePermission } from '@/lib/auth/guard';
+import { formatCompactCurrency, formatDate, formatPercent, formatRelativeTime } from '@/lib/format';
+import { getRequestLocale, getRequestLocationId } from '@/lib/locale';
+import { can } from '@/lib/auth/guard';
+import {
+  getRecentLeads,
+  getRecentWorkOrders,
+  getUpcomingRenewals,
+} from '@/services/dashboard-service';
+import {
+  getAvailabilityBreakdown,
+  getCityBreakdown,
+  getExecutiveExceptions,
+  getPortfolioSummary,
+  getPropertyPerformance,
+  getTrendSeries,
+  getUnitStatusBreakdown,
+  scopeFromSession,
+} from '@/services/metrics-service';
+
+export const metadata: Metadata = { title: 'Executive Dashboard' };
+export const dynamic = 'force-dynamic';
+
+function greetingKey(now: Date): 'Good morning' | 'Good afternoon' | 'Good evening' {
+  const hour = Number(
+    new Intl.DateTimeFormat('en-US', { hour: 'numeric', hour12: false, timeZone: 'Asia/Riyadh' }).format(now),
+  );
+  if (hour < 12) return 'Good morning';
+  if (hour < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
+function resolvePeriod(value: string | undefined): { months: number; label: string } {
+  switch (value) {
+    case '3m':
+      return { months: 3, label: 'Last 3 months' };
+    case '6m':
+      return { months: 6, label: 'Last 6 months' };
+    case '24m':
+      return { months: 24, label: 'Last 24 months' };
+    default:
+      return { months: 12, label: 'Last 12 months' };
+  }
+}
+
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ period?: string; propertyId?: string }>;
+}) {
+  const user = await requirePermission('dashboard:view');
+  const params = await searchParams;
+  const locale = await getRequestLocale();
+  const cityId = await getRequestLocationId();
+  const period = resolvePeriod(params.period);
+
+  const periodEnd = new Date();
+  const periodStart = new Date(
+    Date.UTC(periodEnd.getUTCFullYear(), periodEnd.getUTCMonth() - period.months + 1, 1),
+  );
+
+  const scope = scopeFromSession(user, {
+    cityId,
+    propertyId: params.propertyId ?? null,
+    periodStart,
+    periodEnd,
+  });
+
+  const [
+    summary,
+    availability,
+    statusBreakdown,
+    trend,
+    performance,
+    cityBreakdown,
+    exceptions,
+    recentLeads,
+    renewals,
+    workOrderRows,
+  ] = await Promise.all([
+    getPortfolioSummary(scope),
+    getAvailabilityBreakdown(scope),
+    getUnitStatusBreakdown(scope),
+    getTrendSeries(scope, period.months),
+    getPropertyPerformance(scope),
+    getCityBreakdown(scope),
+    getExecutiveExceptions(scope),
+    getRecentLeads(scope),
+    getUpcomingRenewals(scope),
+    getRecentWorkOrders(scope),
+  ]);
+
+  const firstName = user.fullName.split(' ')[0];
+  const money = (value: number) => formatCompactCurrency(value, { locale });
+
+  return (
+    <div className="flex flex-col gap-5">
+      <PageHeader
+        title={`${greetingKey(new Date())}, ${firstName}`}
+        subtitle="Here's the latest overview of your real estate portfolio."
+        actions={
+          <>
+            <PeriodSelector value={params.period ?? '12m'} />
+            {can(user, 'properties:create') ? (
+              <Button asChild>
+                <Link href="/properties/new">
+                  <Plus />
+                  Add Property
+                </Link>
+              </Button>
+            ) : null}
+          </>
+        }
+      />
+
+      {/* Unit status KPIs — each drills into the filtered unit inventory. */}
+      <KpiGrid columns={5}>
+        <KpiCard
+          label="Total Units"
+          value={availability.total.toLocaleString()}
+          caption={`Across ${summary.propertyCount} properties`}
+          icon={<Building2 />}
+          tone="neutral"
+          href="/units"
+        />
+        <KpiCard
+          label="Available"
+          value={availability.available.toLocaleString()}
+          caption="Ready for lease"
+          icon={<KeyRound />}
+          tone="success"
+          ringValue={availability.availableShare}
+          href="/units?availability=available"
+        />
+        <KpiCard
+          label="Reserved"
+          value={availability.reserved.toLocaleString()}
+          caption="Under negotiation"
+          icon={<Clock />}
+          tone="warning"
+          ringValue={availability.reservedShare}
+          href="/units?availability=reserved"
+        />
+        <KpiCard
+          label="Leased"
+          value={availability.leased.toLocaleString()}
+          caption="Contracted / Active"
+          icon={<FileText />}
+          tone="info"
+          ringValue={availability.leasedShare}
+          href="/units?availability=leased"
+        />
+        <KpiCard
+          label="Not Available"
+          value={availability.notAvailable.toLocaleString()}
+          caption="Off-market / Services"
+          icon={<Ban />}
+          tone="neutral"
+          ringValue={availability.notAvailableShare}
+          href="/units?availability=not_available"
+        />
+      </KpiGrid>
+
+      {/* Financial KPIs */}
+      <KpiGrid columns={6}>
+        <KpiCard
+          label="Portfolio Value"
+          value={money(summary.marketValue)}
+          caption="Current market valuation"
+          icon={<Building2 />}
+          tone="gold"
+          href="/financials/valuations"
+        />
+        <KpiCard
+          label="Annual Rental Value"
+          value={money(summary.annualRentalValue)}
+          caption="At full occupancy"
+          icon={<CircleDollarSign />}
+          tone="neutral"
+          href="/units"
+        />
+        <KpiCard
+          label="Contracted Revenue"
+          value={money(summary.contractedRevenue)}
+          caption="Active leases"
+          icon={<FileText />}
+          tone="info"
+          href="/contracts"
+        />
+        <KpiCard
+          label="Collected Revenue"
+          value={money(summary.collectedRevenue)}
+          caption={`${period.label} collections`}
+          icon={<ReceiptText />}
+          tone="success"
+          href="/collections"
+        />
+        <KpiCard
+          label="Outstanding"
+          value={money(summary.outstanding)}
+          caption={`${money(summary.overdue)} overdue`}
+          icon={<Clock />}
+          tone={summary.overdue > 0 ? 'warning' : 'neutral'}
+          href="/collections?status=overdue"
+        />
+        <KpiCard
+          label="Collection Rate"
+          value={formatPercent(summary.collectionRate, { locale })}
+          caption="Collected of billed"
+          icon={<ClipboardCheck />}
+          tone={summary.collectionRate >= 95 ? 'success' : summary.collectionRate >= 88 ? 'warning' : 'error'}
+          ringValue={summary.collectionRate}
+          href="/collections"
+        />
+      </KpiGrid>
+
+      <KpiGrid columns={6}>
+        <KpiCard
+          label="Occupancy Rate"
+          value={formatPercent(summary.occupancyRate, { locale })}
+          caption={`${summary.occupiedUnits} of ${summary.totalUnits} units`}
+          icon={<ClipboardCheck />}
+          tone="success"
+          ringValue={summary.occupancyRate}
+          href="/units?availability=leased"
+        />
+        <KpiCard
+          label="Vacancy Rate"
+          value={formatPercent(summary.vacancyRate, { locale })}
+          caption={`${summary.availableUnits} units available`}
+          icon={<Clock />}
+          tone="warning"
+          higherIsBetter={false}
+          href="/units?availability=available"
+        />
+        <KpiCard
+          label="Net Operating Income"
+          value={money(summary.netOperatingIncome)}
+          caption={`${formatPercent(summary.noiMargin, { locale })} margin`}
+          icon={<TrendingUp />}
+          tone="info"
+          href="/financials"
+        />
+        <KpiCard
+          label="Operating Expenses"
+          value={money(summary.operatingExpenses)}
+          caption={`${money(summary.maintenanceCost)} maintenance`}
+          icon={<Wrench />}
+          tone="neutral"
+          higherIsBetter={false}
+          href="/financials/expenses"
+        />
+        <KpiCard
+          label="Expiring Contracts"
+          value={String(summary.expiringContracts)}
+          caption={`${money(summary.expiringContractValue)} at risk`}
+          icon={<CalendarDays />}
+          tone={summary.expiringContracts > 0 ? 'warning' : 'neutral'}
+          higherIsBetter={false}
+          href="/contracts?expiringWithinDays=90"
+        />
+        <KpiCard
+          label="Gross Yield"
+          value={formatPercent(summary.grossYield, { locale, decimals: 1 })}
+          caption={`WALE ${summary.wale} years`}
+          icon={<TrendingUp />}
+          tone="gold"
+          href="/reports"
+        />
+      </KpiGrid>
+
+      {exceptions.length > 0 ? <ExceptionsPanel exceptions={exceptions} /> : null}
+
+      {/* Charts */}
+      <DashboardCharts
+        trend={trend}
+        statusBreakdown={statusBreakdown}
+        totalUnits={availability.total}
+        cityBreakdown={cityBreakdown}
+        summary={{
+          marketValue: summary.marketValue,
+          bookValue: summary.bookValue,
+          annualRentalValue: summary.annualRentalValue,
+          contractedRevenue: summary.contractedRevenue,
+          collectedRevenue: summary.collectedRevenue,
+          outstanding: summary.outstanding,
+          collectionRate: summary.collectionRate,
+        }}
+        periodLabel={period.label}
+        locale={locale}
+      />
+
+      {/* Properties performance */}
+      <Card>
+        <CardHeader
+          title="Properties Performance"
+          action={
+            <Button variant="link" size="sm" asChild>
+              <Link href="/properties">
+                View all
+                <ArrowRight className="size-3.5 rtl-flip" />
+              </Link>
+            </Button>
+          }
+        />
+        {performance.length === 0 ? (
+          <EmptyState
+            icon={<Building2 />}
+            title="No properties in scope"
+            description="Add a property or adjust your filters to see performance."
+          />
+        ) : (
+          <TableContainer>
+            <Table>
+              <THead>
+                <TR>
+                  <TH className="w-10">#</TH>
+                  <TH>Property</TH>
+                  <TH>City</TH>
+                  <TH alignment="end">Total Units</TH>
+                  <TH alignment="end">Available</TH>
+                  <TH alignment="end">Leased</TH>
+                  <TH alignment="end">Occupancy</TH>
+                  <TH alignment="end">Collection</TH>
+                  <TH alignment="end">Annual Rental Value</TH>
+                  <TH alignment="center">Status</TH>
+                </TR>
+              </THead>
+              <TBody>
+                {performance.map((row, index) => (
+                  <TR key={row.propertyId} interactive>
+                    <TD className="text-[var(--color-text-tertiary)]">{index + 1}</TD>
+                    <TD>
+                      <Link
+                        href={`/properties/${row.propertyId}`}
+                        className="font-medium text-[var(--color-text-primary)] hover:text-[var(--color-info)]"
+                      >
+                        {row.name}
+                      </Link>
+                      <span className="block text-[11px] text-[var(--color-text-tertiary)]">
+                        {row.code} · {row.typeName}
+                      </span>
+                    </TD>
+                    <TD className="text-[var(--color-text-secondary)]">{row.cityName}</TD>
+                    <TD alignment="end" numeric>
+                      {row.totalUnits}
+                    </TD>
+                    <TD alignment="end" numeric className="text-[var(--color-success)]">
+                      {row.availableUnits}
+                    </TD>
+                    <TD alignment="end" numeric>
+                      {row.occupiedUnits}
+                    </TD>
+                    <TD
+                      alignment="end"
+                      numeric
+                      className={
+                        row.occupancyRate >= 92
+                          ? 'font-medium text-[var(--color-success)]'
+                          : 'font-medium text-[#b97a08]'
+                      }
+                    >
+                      {formatPercent(row.occupancyRate, { locale })}
+                    </TD>
+                    <TD
+                      alignment="end"
+                      numeric
+                      className={
+                        row.collectionRate >= 95
+                          ? 'font-medium text-[var(--color-success)]'
+                          : 'font-medium text-[#b97a08]'
+                      }
+                    >
+                      {formatPercent(row.collectionRate, { locale })}
+                    </TD>
+                    <TD alignment="end" numeric>
+                      {money(row.annualRentalValue)}
+                    </TD>
+                    <TD alignment="center">
+                      <StatusBadge status={row.status} />
+                    </TD>
+                  </TR>
+                ))}
+              </TBody>
+            </Table>
+          </TableContainer>
+        )}
+      </Card>
+
+      {/* Operational panels */}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+        <Card>
+          <CardHeader
+            title="Recent Leads"
+            action={
+              <Button variant="link" size="sm" asChild>
+                <Link href="/leasing">
+                  View all
+                  <ArrowRight className="size-3.5 rtl-flip" />
+                </Link>
+              </Button>
+            }
+          />
+          {recentLeads.length === 0 ? (
+            <EmptyState title="No leads yet" description="New inquiries will appear here." />
+          ) : (
+            <TableContainer>
+              <Table>
+                <THead>
+                  <TR>
+                    <TH>Name</TH>
+                    <TH>Source</TH>
+                    <TH>Stage</TH>
+                    <TH alignment="end">Date</TH>
+                  </TR>
+                </THead>
+                <TBody>
+                  {recentLeads.map((lead) => (
+                    <TR key={lead.id} interactive>
+                      <TD>
+                        <Link
+                          href={`/leasing/leads/${lead.id}`}
+                          className="font-medium hover:text-[var(--color-info)]"
+                        >
+                          {lead.customerName}
+                        </Link>
+                        <span className="block text-[11px] text-[var(--color-text-tertiary)]">
+                          {lead.propertyName ?? '—'}
+                        </span>
+                      </TD>
+                      <TD className="text-[var(--color-text-secondary)]">{lead.sourceName ?? '—'}</TD>
+                      <TD>
+                        <Badge tone={mapStageTone(lead.stageColor)}>{lead.stageName}</Badge>
+                      </TD>
+                      <TD alignment="end" className="whitespace-nowrap text-[var(--color-text-secondary)]">
+                        {formatRelativeTime(lead.createdAt, { locale })}
+                      </TD>
+                    </TR>
+                  ))}
+                </TBody>
+              </Table>
+            </TableContainer>
+          )}
+        </Card>
+
+        <Card>
+          <CardHeader
+            title="Upcoming Renewals"
+            action={
+              <Button variant="link" size="sm" asChild>
+                <Link href="/contracts?expiringWithinDays=180">
+                  View all
+                  <ArrowRight className="size-3.5 rtl-flip" />
+                </Link>
+              </Button>
+            }
+          />
+          {renewals.length === 0 ? (
+            <EmptyState title="No renewals due" description="No contracts expire in the next 180 days." />
+          ) : (
+            <TableContainer>
+              <Table>
+                <THead>
+                  <TR>
+                    <TH>Tenant</TH>
+                    <TH>Property</TH>
+                    <TH alignment="end">Expiry</TH>
+                    <TH alignment="end">Days Left</TH>
+                  </TR>
+                </THead>
+                <TBody>
+                  {renewals.map((row) => (
+                    <TR key={row.contractId} interactive>
+                      <TD>
+                        <Link
+                          href={`/contracts/${row.contractId}`}
+                          className="font-medium hover:text-[var(--color-info)]"
+                        >
+                          {row.tenantName}
+                        </Link>
+                        <span className="block text-[11px] text-[var(--color-text-tertiary)]">
+                          Unit {row.unitCode}
+                        </span>
+                      </TD>
+                      <TD className="text-[var(--color-text-secondary)]">{row.propertyName}</TD>
+                      <TD alignment="end" className="whitespace-nowrap">
+                        {formatDate(row.endDate, { locale })}
+                      </TD>
+                      <TD alignment="end">
+                        <Badge tone={row.daysLeft <= 60 ? 'error' : row.daysLeft <= 120 ? 'warning' : 'success'}>
+                          {row.daysLeft}
+                        </Badge>
+                      </TD>
+                    </TR>
+                  ))}
+                </TBody>
+              </Table>
+            </TableContainer>
+          )}
+        </Card>
+
+        <Card>
+          <CardHeader
+            title="Maintenance Requests"
+            action={
+              <Button variant="link" size="sm" asChild>
+                <Link href="/maintenance">
+                  View all
+                  <ArrowRight className="size-3.5 rtl-flip" />
+                </Link>
+              </Button>
+            }
+          />
+          {workOrderRows.length === 0 ? (
+            <EmptyState title="No work orders" description="Reported issues will appear here." />
+          ) : (
+            <TableContainer>
+              <Table>
+                <THead>
+                  <TR>
+                    <TH>#</TH>
+                    <TH>Unit</TH>
+                    <TH>Type</TH>
+                    <TH alignment="center">Status</TH>
+                    <TH alignment="center">Priority</TH>
+                  </TR>
+                </THead>
+                <TBody>
+                  {workOrderRows.map((row) => (
+                    <TR key={row.id} interactive>
+                      <TD>
+                        <Link
+                          href={`/maintenance/${row.id}`}
+                          className="font-medium hover:text-[var(--color-info)]"
+                        >
+                          {row.code}
+                        </Link>
+                      </TD>
+                      <TD className="text-[var(--color-text-secondary)]">{row.unitCode ?? 'Common'}</TD>
+                      <TD className="text-[var(--color-text-secondary)]">{row.categoryName ?? '—'}</TD>
+                      <TD alignment="center">
+                        <StatusBadge status={row.status} />
+                      </TD>
+                      <TD alignment="center">
+                        <StatusBadge status={row.priority} dot={false} />
+                      </TD>
+                    </TR>
+                  ))}
+                </TBody>
+              </Table>
+            </TableContainer>
+          )}
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function mapStageTone(colorToken: string) {
+  const map: Record<string, 'info' | 'warning' | 'success' | 'error' | 'gold' | 'neutral'> = {
+    info: 'info',
+    warning: 'warning',
+    success: 'success',
+    error: 'error',
+    gold: 'gold',
+  };
+  return map[colorToken] ?? 'neutral';
+}

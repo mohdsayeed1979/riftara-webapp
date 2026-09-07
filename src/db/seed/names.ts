@@ -1,0 +1,100 @@
+/** Realistic Saudi corporate and individual names for the demo dataset. */
+
+export const COMPANY_TENANTS = [
+  { name: 'Tech Solutions Arabia', industry: 'Technology' },
+  { name: 'Al Noor Trading Company', industry: 'Trading' },
+  { name: 'Future Vision Consulting', industry: 'Professional Services' },
+  { name: 'Smart Connect Telecom', industry: 'Telecommunications' },
+  { name: 'Global Systems Integration', industry: 'Technology' },
+  { name: 'Riyadh Logistics Group', industry: 'Logistics' },
+  { name: 'Prime Medical Group', industry: 'Healthcare' },
+  { name: 'EduTech Learning', industry: 'Education' },
+  { name: 'Build Right Contracting', industry: 'Construction' },
+  { name: 'National Bank Services', industry: 'Financial Services' },
+  { name: 'Saudi Retail Company', industry: 'Retail' },
+  { name: 'Elite Motors', industry: 'Automotive' },
+  { name: 'Green Fields Agriculture', industry: 'Agriculture' },
+  { name: 'Digital Hub Media', industry: 'Media' },
+  { name: 'Logix Transport', industry: 'Logistics' },
+  { name: 'Health Plus Pharmacies', industry: 'Healthcare' },
+  { name: 'Innovate Labs', industry: 'Technology' },
+  { name: 'Cloud Nine Software', industry: 'Technology' },
+  { name: 'Arabian Gulf Insurance', industry: 'Insurance' },
+  { name: 'Desert Rose Hospitality', industry: 'Hospitality' },
+  { name: 'Najd Engineering Works', industry: 'Engineering' },
+  { name: 'Falcon Aviation Services', industry: 'Aviation' },
+  { name: 'Coastal Foods Distribution', industry: 'Food & Beverage' },
+  { name: 'Vertex Legal Advisors', industry: 'Legal' },
+  { name: 'Aramco Contractors Support', industry: 'Energy Services' },
+  { name: 'Blue Horizon Marine', industry: 'Maritime' },
+  { name: 'Rawabi Facility Services', industry: 'Facility Management' },
+  { name: 'Sahara Chemicals', industry: 'Chemicals' },
+  { name: 'Nova Fitness Centers', industry: 'Fitness' },
+  { name: 'Golden Sands Real Estate', industry: 'Real Estate' },
+  { name: 'Kingdom Data Centers', industry: 'Technology' },
+  { name: 'Al Faisaliah Furniture', industry: 'Retail' },
+  { name: 'Modern Print House', industry: 'Printing' },
+  { name: 'Zahra Cosmetics', industry: 'Retail' },
+  { name: 'Wadi Water Treatment', industry: 'Utilities' },
+  { name: 'Meridian Travel', industry: 'Travel' },
+  { name: 'Atlas Security Services', industry: 'Security' },
+  { name: 'Bright Future Academy', industry: 'Education' },
+  { name: 'Sadara Petrochemical Trading', industry: 'Petrochemicals' },
+  { name: 'Orbit Electronics', industry: 'Electronics' },
+  { name: 'Crown Catering Services', industry: 'Food & Beverage' },
+  { name: 'Pearl Diagnostics', industry: 'Healthcare' },
+  { name: 'Terra Construction Supplies', industry: 'Construction' },
+  { name: 'Skyline Architects', industry: 'Architecture' },
+  { name: 'Unified Payment Solutions', industry: 'Financial Services' },
+  { name: 'Rihal Publishing', industry: 'Media' },
+  { name: 'Anwar Energy Systems', industry: 'Energy' },
+  { name: 'Marasi Shipping Agency', industry: 'Maritime' },
+  { name: 'Qimam Management Consulting', industry: 'Professional Services' },
+  { name: 'Deraya Insurance Brokers', industry: 'Insurance' },
+];
+
+export const FIRST_NAMES_MALE = [
+  'Ahmed', 'Mohammed', 'Abdullah', 'Khalid', 'Faisal', 'Omar', 'Saud', 'Fahad', 'Yousef', 'Ali',
+  'Tariq', 'Majed', 'Nasser', 'Bandar', 'Sultan', 'Hassan', 'Ibrahim', 'Salman', 'Rayan', 'Ziad',
+];
+
+export const FIRST_NAMES_FEMALE = [
+  'Sarah', 'Nora', 'Maha', 'Reem', 'Lama', 'Hessa', 'Aisha', 'Fatimah', 'Amal', 'Dana',
+  'Ghada', 'Haya', 'Jawaher', 'Latifah', 'Munira', 'Rana', 'Shatha', 'Wafa', 'Yara', 'Zainab',
+];
+
+export const FAMILY_NAMES = [
+  'AlRashid', 'AlOtaibi', 'AlQahtani', 'AlHarbi', 'AlDosari', 'AlZahrani', 'AlShehri', 'AlGhamdi',
+  'AlMutairi', 'AlSubaie', 'AlAnazi', 'AlBalawi', 'AlJuhani', 'AlMalki', 'AlSaeed', 'AlHamdan',
+  'AlNasser', 'AlFaisal', 'AlMousa', 'AlKhalifa', 'AlSalem', 'AlTamimi', 'AlYami', 'AlAmri',
+];
+
+export const WORK_ORDER_TITLES: Record<string, string[]> = {
+  hvac: ['AC not cooling', 'HVAC filter replacement', 'Chilled water leak', 'Thermostat fault'],
+  electrical: ['Lighting circuit failure', 'Power socket not working', 'Distribution board trip', 'Emergency light fault'],
+  plumbing: ['Water leak under sink', 'Blocked drainage line', 'Low water pressure', 'Toilet flush fault'],
+  elevators: ['Elevator stopped between floors', 'Elevator door sensor fault', 'Annual elevator inspection', 'Elevator noise complaint'],
+  fire_safety: ['Fire alarm panel fault', 'Sprinkler head replacement', 'Fire extinguisher servicing', 'Smoke detector false alarm'],
+  civil: ['Ceiling tile damage', 'Door closer replacement', 'Floor tile cracking', 'Partition wall repair'],
+  painting: ['Repainting after move-out', 'Corridor touch-up painting', 'External facade touch-up'],
+  cctv_access: ['CCTV camera offline', 'Access card reader fault', 'DVR storage full'],
+  generator: ['Generator failed to start', 'Generator routine servicing', 'Fuel tank refill'],
+  pumps: ['Booster pump vibration', 'Sump pump failure', 'Pump control panel fault'],
+  cleaning_request: ['Deep cleaning request', 'Post-handover cleaning', 'Common area cleaning complaint'],
+  other: ['General inspection request', 'Signage installation', 'Pest control treatment'],
+};
+
+export const CAMPAIGN_NAMES = [
+  'Winter Leasing Push',
+  'Office Expansion Riyadh',
+  'Retail Spotlight Jeddah',
+  'Flex Space Awareness',
+  'Business Growth Q1',
+  'Logistics Park Launch',
+  'Olaya Tower Prestige',
+  'Residences Move-In Offer',
+  'Granada Retail Podium',
+  'Corporate HQ Relocation',
+  'Ramadan Retail Activation',
+  'Year-End Occupancy Drive',
+];
