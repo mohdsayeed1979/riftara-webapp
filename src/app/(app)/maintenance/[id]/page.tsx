@@ -7,6 +7,7 @@ import { DetailList, DetailRow, MetaItem, PageHeader } from '@/components/ui/pag
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Table, TableContainer, TBody, TD, TH, THead, TR } from '@/components/ui/table';
 import { requirePermission } from '@/lib/auth/guard';
+import { isUuid } from '@/lib/utils';
 import { formatCurrency, formatDate, formatDateTime, formatDuration } from '@/lib/format';
 import { getRequestLocale } from '@/lib/locale';
 import { getWorkOrderDetail } from '@/services/maintenance-service';
@@ -17,6 +18,7 @@ export const metadata: Metadata = { title: 'Work Order' };
 export default async function WorkOrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requirePermission('maintenance:view');
   const { id } = await params;
+  if (!isUuid(id)) notFound();
   const locale = await getRequestLocale();
 
   const data = await getWorkOrderDetail(user.organizationId, id);

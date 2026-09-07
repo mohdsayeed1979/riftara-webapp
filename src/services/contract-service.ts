@@ -1,11 +1,14 @@
 import 'server-only';
-import { and, asc, count, desc, eq, gte, ilike, inArray, isNull, lte, or, type SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, ilike, inArray, isNull, lte, ne, or, type SQL } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import {
   buildings,
   contracts,
   contractVersions,
+  customers,
+  floors,
   invoices,
+  organizations,
   paymentSchedules,
   properties,
   tenants,
@@ -466,3 +469,189 @@ async function nextInvoiceNumber(tx: DbLike, organizationId: string): Promise<st
 }
 
 type DbLike = Awaited<ReturnType<typeof getDb>>;
+
+/** Reference data for the New Contract form. Property → Building → Floor → Unit
+ *  hierarchy plus tenants and a default lessor name — all organization-scoped. */
+export async function getContractFormReferenceData(organizationId: string) {
+  const db = await getDb();
+  const [propertyRows, buildingRows, floorRows, unitRows, tenantRows, orgRow] = await Promise.all([
+    db
+      .select({ id: properties.id, name: properties.nameEn })
+      .from(properties)
+      .where(and(eq(properties.organizationId, organizationId), isNull(properties.deletedAt)))
+      .orderBy(asc(properties.nameEn)),
+    db
+      .select({ id: buildings.id, name: buildings.nameEn, propertyId: buildings.propertyId })
+      .from(buildings)
+      .where(and(eq(buildings.organizationId, organizationId), isNull(buildings.deletedAt)))
+      .orderBy(asc(buildings.code)),
+    db
+      .select({ id: floors.id, name: floors.nameEn, buildingId: floors.buildingId, level: floors.level })
+      .from(floors)
+      .where(and(eq(floors.organizationId, organizationId), isNull(floors.deletedAt)))
+      .orderBy(asc(floors.level)),
+    db
+      .select({
+        id: units.id,
+        unitNumber: units.unitNumber,
+        code: units.code,
+        propertyId: units.propertyId,
+        buildingId: units.buildingId,
+        floorId: units.floorId,
+        availabilityClass: units.computedAvailabilityClass,
+      })
+      .from(units)
+      .where(and(eq(units.organizationId, organizationId), isNull(units.deletedAt)))
+      .orderBy(asc(units.unitNumber)),
+    db
+      .select({
+        id: tenants.id,
+        displayName: tenants.displayName,
+        status: tenants.status,
+        customerId: tenants.customerId,
+        customerName: customers.fullNameEn,
+        mobile: customers.mobile,
+        email: customers.email,
+        customerType: customers.customerType,
+      })
+      .from(tenants)
+      .innerJoin(customers, eq(customers.id, tenants.customerId))
+      .where(and(eq(tenants.organizationId, organizationId), isNull(tenants.deletedAt)))
+      .orderBy(asc(tenants.displayName))
+      .limit(1000),
+    db.select({ name: organizations.nameEn }).from(organizations).where(eq(organizations.id, organizationId)).limit(1),
+  ]);
+
+  return {
+    properties: propertyRows,
+    buildings: buildingRows,
+    floors: floorRows,
+    units: unitRows,
+    tenants: tenantRows,
+    lessorName: orgRow[0]?.name ?? 'RIFTARA Real Estate Company LLC',
+  };
+}
+
+const EDITABLE_STATUSES = ['draft', 'issued', 'pending_approval'] as const;
+
+/** Updates a DRAFT contract (BR-012: signed/active contracts are locked).
+ *  Re-checks BR-003 overlap when the unit/period changes, and records a new
+ *  contract version snapshot. */
+export async function updateContractDraft(
+  actor: SessionUser,
+  contractId: string,
+  input: CreateContractInput,
+): Promise<{ id: string }> {
+  if (new Date(input.endDate) <= new Date(input.startDate)) {
+    throw validationError('The contract end date must be after the start date.');
+  }
+  const db = await getDb();
+  const policy = await getPolicy(actor.organizationId);
+
+  return db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select()
+      .from(contracts)
+      .where(and(eq(contracts.id, contractId), eq(contracts.organizationId, actor.organizationId), isNull(contracts.deletedAt)))
+      .limit(1);
+    if (!existing) throw notFound('Contract', contractId);
+    if (!EDITABLE_STATUSES.includes(existing.status as (typeof EDITABLE_STATUSES)[number])) {
+      throw validationError('Only draft contracts can be edited. Signed or active contracts are locked.');
+    }
+
+    // BR-003 — another active contract on this unit for an overlapping period.
+    const overlapping = await tx
+      .select({ contractNumber: contracts.contractNumber })
+      .from(contracts)
+      .where(
+        and(
+          eq(contracts.unitId, input.unitId),
+          eq(contracts.isActive, true),
+          isNull(contracts.deletedAt),
+          ne(contracts.id, contractId),
+          lte(contracts.startDate, input.endDate),
+          gte(contracts.endDate, input.startDate),
+        ),
+      )
+      .limit(1);
+    if (overlapping.length > 0) {
+      throw businessRuleViolation(
+        'BR-003',
+        `This unit already has an active contract (${overlapping[0].contractNumber}) overlapping the selected period.`,
+      );
+    }
+
+    const [unit] = await tx
+      .select({ leasableArea: units.leasableArea, buildingId: units.buildingId })
+      .from(units)
+      .where(eq(units.id, input.unitId))
+      .limit(1);
+    if (!unit) throw notFound('Unit', input.unitId);
+
+    const durationMonths =
+      (new Date(input.endDate).getUTCFullYear() - new Date(input.startDate).getUTCFullYear()) * 12 +
+      (new Date(input.endDate).getUTCMonth() - new Date(input.startDate).getUTCMonth()) +
+      1;
+    const area = Number(unit.leasableArea ?? 0);
+    const nextVersion = existing.version + 1;
+
+    await tx
+      .update(contracts)
+      .set({
+        tenantId: input.tenantId,
+        lessorName: input.lessorName ?? existing.lessorName,
+        propertyId: input.propertyId,
+        buildingId: unit.buildingId,
+        unitId: input.unitId,
+        startDate: input.startDate,
+        endDate: input.endDate,
+        durationMonths,
+        leasableArea: area || null,
+        annualRent: round2(input.annualRent),
+        rentPerSqm: area > 0 ? round2(input.annualRent / area) : null,
+        paymentFrequency: input.paymentFrequency,
+        depositAmount: round2(input.depositAmount ?? input.annualRent * 0.25),
+        vatRateBps: Math.round(policy.vatRatePercent * 100),
+        serviceCharges: round2(input.serviceCharges ?? 0),
+        escalationPercent: input.escalationPercent ?? 0,
+        gracePeriodDays: input.gracePeriodDays ?? 0,
+        fitOutPeriodDays: input.fitOutPeriodDays ?? 0,
+        specialConditions: input.specialConditions ?? null,
+        version: nextVersion,
+        updatedAt: new Date(),
+      })
+      .where(eq(contracts.id, contractId));
+
+    await tx.insert(contractVersions).values({
+      contractId,
+      version: nextVersion,
+      snapshot: { ...input, contractNumber: existing.contractNumber },
+      changeReason: 'Draft updated.',
+      createdByUserId: actor.id,
+    });
+
+    await recordAudit(tx, {
+      organizationId: actor.organizationId,
+      action: 'update',
+      entityType: 'contract',
+      entityId: contractId,
+      entityLabel: existing.contractNumber,
+      previousValue: { annualRent: existing.annualRent, startDate: existing.startDate, endDate: existing.endDate },
+      newValue: { annualRent: input.annualRent, startDate: input.startDate, endDate: input.endDate },
+      actor: { id: actor.id, fullName: actor.fullName },
+    });
+
+    return { id: contractId };
+  });
+}
+
+/** Contract row for the edit form (draft only). */
+export async function getContractForEdit(organizationId: string, contractId: string) {
+  const db = await getDb();
+  const [contract] = await db
+    .select()
+    .from(contracts)
+    .where(and(eq(contracts.id, contractId), eq(contracts.organizationId, organizationId), isNull(contracts.deletedAt)))
+    .limit(1);
+  return contract ?? null;
+}

@@ -100,6 +100,11 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
                 </Link>
               </Button>
             ) : null}
+            {can(user, 'contracts:create') ? (
+              <Button variant="secondary" asChild>
+                <Link href={`/contracts/new?tenantId=${id}`}>Create Contract</Link>
+              </Button>
+            ) : null}
             <Button variant="secondary" asChild>
               <Link href={`/leasing/customers/${tenant.customerId}`}>
                 <User />

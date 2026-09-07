@@ -1,14 +1,15 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { FileText } from 'lucide-react';
+import { FileText, Pencil, Plus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { FilterBar } from '@/components/app/filter-bar';
 import { EmptyState } from '@/components/ui/misc';
 import { PageHeader } from '@/components/ui/page';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Pagination, Table, TableContainer, TBody, TD, TH, THead, TR } from '@/components/ui/table';
-import { requirePermission } from '@/lib/auth/guard';
+import { can, requirePermission } from '@/lib/auth/guard';
 import { formatCompactCurrency, formatDate } from '@/lib/format';
 import { getRequestLocale } from '@/lib/locale';
 import { listContracts, type ContractListFilters } from '@/services/contract-service';
@@ -58,6 +59,16 @@ export default async function ContractsPage({
       <PageHeader
         title="Contracts"
         subtitle="Lease contracts across the portfolio, from draft to renewal."
+        actions={
+          can(user, 'contracts:create') ? (
+            <Button asChild>
+              <Link href="/contracts/new">
+                <Plus />
+                Create Contract
+              </Link>
+            </Button>
+          ) : undefined
+        }
       />
 
       {expiringFilter ? (
@@ -90,7 +101,21 @@ export default async function ContractsPage({
 
       <Card>
         {items.length === 0 ? (
-          <EmptyState icon={<FileText />} title="No contracts found" description="Contracts will appear here as leases are created." />
+          <EmptyState
+            icon={<FileText />}
+            title="No contracts found"
+            description="Create a lease contract to get started."
+            action={
+              can(user, 'contracts:create') ? (
+                <Button asChild>
+                  <Link href="/contracts/new">
+                    <Plus />
+                    Create Contract
+                  </Link>
+                </Button>
+              ) : undefined
+            }
+          />
         ) : (
           <>
             <TableContainer>
@@ -105,6 +130,7 @@ export default async function ContractsPage({
                     <TH alignment="end">Annual Rent</TH>
                     <TH>Frequency</TH>
                     <TH alignment="center">Status</TH>
+                    <TH alignment="end">Actions</TH>
                   </TR>
                 </THead>
                 <TBody>
@@ -139,6 +165,14 @@ export default async function ContractsPage({
                       <TD alignment="end" numeric>{formatCompactCurrency(contract.annualRent, { locale })}</TD>
                       <TD className="text-[var(--color-text-secondary)] capitalize">{contract.paymentFrequency.replace(/_/g, '-')}</TD>
                       <TD alignment="center"><StatusBadge status={contract.status} /></TD>
+                      <TD alignment="end" className="whitespace-nowrap">
+                        <Link href={`/contracts/${contract.id}`} className="text-[12px] font-medium text-[var(--color-info)] hover:underline">View</Link>
+                        {can(user, 'contracts:edit') && ['draft', 'issued', 'pending_approval'].includes(contract.status) ? (
+                          <Link href={`/contracts/${contract.id}/edit`} className="ms-3 inline-flex items-center gap-1 text-[12px] font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]">
+                            <Pencil className="size-3" />Edit
+                          </Link>
+                        ) : null}
+                      </TD>
                     </TR>
                   ))}
                 </TBody>

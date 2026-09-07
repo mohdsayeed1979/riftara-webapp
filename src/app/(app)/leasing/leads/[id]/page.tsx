@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { isUuid } from '@/lib/utils';
 import { and, desc, eq } from 'drizzle-orm';
 import { CalendarClock, Target, User } from 'lucide-react';
 import { getDb } from '@/db/client';
@@ -32,6 +33,7 @@ export const metadata: Metadata = { title: 'Lead' };
 export default async function LeadDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requirePermission('leasing:view');
   const { id } = await params;
+  if (!isUuid(id)) notFound();
   const locale = await getRequestLocale();
   const db = await getDb();
 

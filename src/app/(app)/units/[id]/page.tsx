@@ -75,6 +75,11 @@ export default async function UnitDetailPage({ params }: { params: Promise<{ id:
                 </Link>
               </Button>
             ) : null}
+            {can(user, 'contracts:create') ? (
+              <Button variant="secondary" asChild>
+                <Link href={`/contracts/new?unitId=${id}`}>Create Contract</Link>
+              </Button>
+            ) : null}
             <Button variant="ghost" asChild>
               <Link href={`/properties/${unit.propertyId}`}>View Property</Link>
             </Button>

@@ -1,17 +1,19 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { Building2, FileSignature, MapPin, User } from 'lucide-react';
+import { Building2, FileSignature, MapPin, Pencil, User } from 'lucide-react';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
 import { DetailList, DetailRow, MetaItem, PageHeader } from '@/components/ui/page';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { EmptyState } from '@/components/ui/misc';
 import { Table, TableContainer, TBody, TD, TH, THead, TR } from '@/components/ui/table';
+import { Button } from '@/components/ui/button';
 import { SignContractButton } from '@/features/contracts/sign-contract-button';
 import { can, requirePermission } from '@/lib/auth/guard';
 import { formatArea, formatCurrency, formatDate } from '@/lib/format';
 import { getRequestLocale } from '@/lib/locale';
 import { getContractDetail } from '@/services/contract-service';
+import { isUuid } from '@/lib/utils';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Contract' };
@@ -19,6 +21,7 @@ export const metadata: Metadata = { title: 'Contract' };
 export default async function ContractDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requirePermission('contracts:view');
   const { id } = await params;
+  if (!isUuid(id)) notFound();
   const locale = await getRequestLocale();
 
   const data = await getContractDetail(user.organizationId, id);
@@ -45,7 +48,15 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
         }
         actions={
           can(user, 'contracts:edit') && (contract.status === 'draft' || contract.status === 'issued' || contract.status === 'pending_approval') ? (
-            <SignContractButton contractId={id} />
+            <>
+              <Button variant="secondary" asChild>
+                <Link href={`/contracts/${id}/edit`}>
+                  <Pencil />
+                  Edit Contract
+                </Link>
+              </Button>
+              <SignContractButton contractId={id} />
+            </>
           ) : undefined
         }
       />
