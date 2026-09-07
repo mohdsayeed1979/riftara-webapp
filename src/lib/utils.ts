@@ -79,3 +79,11 @@ export function groupBy<T, K extends string | number>(items: T[], key: (item: T)
 export function sumBy<T>(items: T[], selector: (item: T) => number | null | undefined): number {
   return round2(items.reduce((total, item) => total + (selector(item) ?? 0), 0));
 }
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** True when `value` is a canonical UUID. Used to guard dynamic `[id]` routes
+ *  so a non-UUID segment (e.g. "new") never reaches a uuid column query. */
+export function isUuid(value: unknown): value is string {
+  return typeof value === 'string' && UUID_RE.test(value);
+}

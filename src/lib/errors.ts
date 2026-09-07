@@ -167,6 +167,22 @@ export function toErrorPayload(error: unknown): { payload: ErrorPayload; status:
     };
   }
 
+  // The auth guard throws ForbiddenError / UnauthenticatedError (not AppError).
+  // Map them to safe, user-facing payloads instead of a generic 500 — matched
+  // by their `code` so this module needs no import from the guard.
+  if (error && typeof error === 'object' && 'code' in error) {
+    const code = (error as { code?: unknown }).code;
+    if (code === 'FORBIDDEN') {
+      return {
+        payload: { code: 'FORBIDDEN', message: 'You do not have permission to perform this action.' },
+        status: 403,
+      };
+    }
+    if (code === 'UNAUTHENTICATED') {
+      return { payload: { code: 'UNAUTHENTICATED', message: 'Authentication required.' }, status: 401 };
+    }
+  }
+
   const translated = translateDatabaseError(error);
   if (translated) {
     return {

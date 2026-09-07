@@ -22,6 +22,7 @@ import { PropertyTabs } from '@/features/properties/property-tabs';
 import { can, requirePermission } from '@/lib/auth/guard';
 import { formatArea, formatCompactCurrency, formatDate, formatPercent } from '@/lib/format';
 import { getRequestLocale } from '@/lib/locale';
+import { isUuid } from '@/lib/utils';
 import { getPropertyDetail } from '@/services/property-service';
 import { getPropertyPerformance, scopeFromSession } from '@/services/metrics-service';
 
@@ -34,6 +35,8 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const user = await requirePermission('properties:view');
   const { id } = await params;
+  // A non-UUID segment (e.g. "new") must never reach a uuid column query.
+  if (!isUuid(id)) notFound();
   const property = await getPropertyDetail(user.organizationId, id);
   return { title: property?.nameEn ?? 'Property' };
 }
@@ -47,6 +50,9 @@ export default async function PropertyDetailPage({
 }) {
   const user = await requirePermission('properties:view');
   const { id } = await params;
+  // Guard the dynamic segment: a non-UUID id (e.g. "new") would otherwise
+  // trigger a PostgreSQL 22P02 uuid cast error instead of a clean 404.
+  if (!isUuid(id)) notFound();
   const { tab } = await searchParams;
   const locale = await getRequestLocale();
 

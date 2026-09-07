@@ -22,6 +22,20 @@ Grid or list view with search, filters (city, type, status) and export. KPI
 strip summarizes the portfolio. Open a property for tabs: Overview, Buildings,
 Units, Leasing, Financial, Valuation, Expenses, Ownership, Documents, Audit.
 
+**Add a property.** The **Add Property** button opens `/properties/new`, the
+property creation route. It requires the `properties:create` permission and is
+organization-scoped — the new record is always created under the signed-in
+user's organization (a client-supplied organization is never trusted). The form
+is grouped into sections: Basic Information, Location & Geography (Region → City
+→ District, hierarchically filtered), Management & Organization, Ownership
+Information (creates the first owner record when an owner name is given),
+Property Technical Information (areas, structure, building systems) and
+Additional Information. Property Code, Name, Type, Usage, Status and City are
+required. Property codes are unique per organization; a duplicate is reported
+inline rather than as a database error. On save you land on the new property's
+detail page; **Save & Add Another** keeps you on the form for the next entry.
+Every creation writes an entry to the audit trail.
+
 ## Units
 Full inventory filtered by property, type, availability and status. Availability
 is **computed** by the engine (from contracts, notice, reservations, maintenance

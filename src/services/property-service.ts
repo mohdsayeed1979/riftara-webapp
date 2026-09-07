@@ -5,6 +5,7 @@ import {
   buildings,
   cities,
   districts,
+  portfolios,
   properties,
   propertyOwnerships,
   propertyTypes,
@@ -374,16 +375,126 @@ export async function getPropertyFilterOptions(organizationId: string, allowedCi
   return { cities: cityRows, types: typeRows };
 }
 
+/** Reference data for the New / Edit Property forms. All rows are loaded from
+ *  the database and scoped to the organization — never hardcoded. Geography is
+ *  returned in full (with parent ids) so the form can enforce the
+ *  Region -> City -> District hierarchy on the client and the server. */
+export async function getPropertyFormReferenceData(organizationId: string) {
+  const db = await getDb();
+  const [regionRows, cityRows, districtRows, portfolioRows, typeRows, managerRows] = await Promise.all([
+    db
+      .select({ id: regions.id, name: regions.nameEn })
+      .from(regions)
+      .where(and(eq(regions.organizationId, organizationId), eq(regions.isActive, true), isNull(regions.deletedAt)))
+      .orderBy(regions.nameEn),
+    db
+      .select({ id: cities.id, name: cities.nameEn, regionId: cities.regionId })
+      .from(cities)
+      .where(and(eq(cities.organizationId, organizationId), eq(cities.isActive, true), isNull(cities.deletedAt)))
+      .orderBy(cities.nameEn),
+    db
+      .select({ id: districts.id, name: districts.nameEn, cityId: districts.cityId })
+      .from(districts)
+      .where(and(eq(districts.organizationId, organizationId), eq(districts.isActive, true), isNull(districts.deletedAt)))
+      .orderBy(districts.nameEn),
+    db
+      .select({ id: portfolios.id, name: portfolios.nameEn })
+      .from(portfolios)
+      .where(and(eq(portfolios.organizationId, organizationId), eq(portfolios.isActive, true), isNull(portfolios.deletedAt)))
+      .orderBy(portfolios.nameEn),
+    db
+      .select({ id: propertyTypes.id, name: propertyTypes.nameEn })
+      .from(propertyTypes)
+      .where(and(eq(propertyTypes.organizationId, organizationId), eq(propertyTypes.isActive, true)))
+      .orderBy(propertyTypes.sortOrder),
+    db
+      .select({ id: users.id, name: users.fullName })
+      .from(users)
+      .where(and(eq(users.organizationId, organizationId), eq(users.isActive, true), isNull(users.deletedAt)))
+      .orderBy(users.fullName),
+  ]);
+
+  return {
+    regions: regionRows,
+    cities: cityRows,
+    districts: districtRows,
+    portfolios: portfolioRows,
+    types: typeRows,
+    managers: managerRows,
+  };
+}
+
+export interface CreateOwnershipInput {
+  documentType: string;
+  documentNumber: string;
+  documentDate?: string | null;
+  issuingAuthority?: string | null;
+  ownerType: 'individual' | 'entity';
+  ownerName: string;
+  identificationType?: string | null;
+  identificationNumber?: string | null;
+  commercialRegistration?: string | null;
+  ownershipPercentage?: number | null;
+  authorizedRepresentative?: string | null;
+  notes?: string | null;
+}
+
 export interface CreatePropertyInput {
+  // Basic
   code: string;
   nameEn: string;
   nameAr?: string | null;
   propertyTypeId: string;
   usage: string;
+  status: string;
+  portfolioId?: string | null;
+  // Location & geography
+  regionId?: string | null;
   cityId: string;
   districtId?: string | null;
   addressLine?: string | null;
+  nationalAddress?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  googleMapsReference?: string | null;
+  costCenter?: string | null;
+  // Management
+  propertyManagerId?: string | null;
+  leasingManagerId?: string | null;
+  assetManagerId?: string | null;
+  acquisitionDate?: string | null;
+  operationalStartDate?: string | null;
+  // Technical
+  landArea?: number | null;
+  builtUpArea?: number | null;
+  grossLeasableArea?: number | null;
+  netLeasableArea?: number | null;
+  commonArea?: number | null;
+  parkingArea?: number | null;
+  buildingCount?: number;
+  floorCount?: number;
+  unitCount?: number;
+  constructionYear?: number | null;
+  renovationYear?: number | null;
+  condition?: string | null;
+  parkingCapacity?: number | null;
+  elevatorCount?: number | null;
+  hvacType?: string | null;
+  electricalCapacity?: string | null;
+  waterInfrastructure?: string | null;
+  fireFightingSystem?: boolean;
+  fireAlarmSystem?: boolean;
+  generator?: boolean;
+  buildingManagementSystem?: boolean;
+  cctv?: boolean;
+  accessControl?: boolean;
+  loadingFacilities?: boolean;
+  emergencySystems?: boolean;
+  // Additional
   descriptionEn?: string | null;
+  descriptionAr?: string | null;
+  // Ownership (optional first owner record)
+  ownership?: CreateOwnershipInput | null;
 }
 
 export async function createProperty(
@@ -395,19 +506,76 @@ export async function createProperty(
     const [created] = await tx
       .insert(properties)
       .values({
-        organizationId: actor.organizationId,
+        organizationId: actor.organizationId, // always the session org — never client-supplied
         code: input.code,
         nameEn: input.nameEn,
         nameAr: input.nameAr ?? null,
         propertyTypeId: input.propertyTypeId,
         usage: input.usage,
-        status: 'active',
+        status: input.status,
+        portfolioId: input.portfolioId ?? null,
+        regionId: input.regionId ?? null,
         cityId: input.cityId,
         districtId: input.districtId ?? null,
         addressLine: input.addressLine ?? null,
+        nationalAddress: input.nationalAddress ?? null,
+        latitude: input.latitude ?? null,
+        longitude: input.longitude ?? null,
+        googleMapsReference: input.googleMapsReference ?? null,
+        costCenter: input.costCenter ?? null,
+        propertyManagerId: input.propertyManagerId ?? null,
+        leasingManagerId: input.leasingManagerId ?? null,
+        assetManagerId: input.assetManagerId ?? null,
+        acquisitionDate: input.acquisitionDate ?? null,
+        operationalStartDate: input.operationalStartDate ?? null,
+        landArea: input.landArea ?? null,
+        builtUpArea: input.builtUpArea ?? null,
+        grossLeasableArea: input.grossLeasableArea ?? null,
+        netLeasableArea: input.netLeasableArea ?? null,
+        commonArea: input.commonArea ?? null,
+        parkingArea: input.parkingArea ?? null,
+        buildingCount: input.buildingCount ?? 0,
+        floorCount: input.floorCount ?? 0,
+        unitCount: input.unitCount ?? 0,
+        constructionYear: input.constructionYear ?? null,
+        renovationYear: input.renovationYear ?? null,
+        condition: input.condition ?? null,
+        parkingCapacity: input.parkingCapacity ?? null,
+        elevatorCount: input.elevatorCount ?? null,
+        hvacType: input.hvacType ?? null,
+        electricalCapacity: input.electricalCapacity ?? null,
+        waterInfrastructure: input.waterInfrastructure ?? null,
+        fireFightingSystem: input.fireFightingSystem ?? false,
+        fireAlarmSystem: input.fireAlarmSystem ?? false,
+        generator: input.generator ?? false,
+        buildingManagementSystem: input.buildingManagementSystem ?? false,
+        cctv: input.cctv ?? false,
+        accessControl: input.accessControl ?? false,
+        loadingFacilities: input.loadingFacilities ?? false,
+        emergencySystems: input.emergencySystems ?? false,
         descriptionEn: input.descriptionEn ?? null,
+        descriptionAr: input.descriptionAr ?? null,
       })
       .returning({ id: properties.id });
+
+    if (input.ownership) {
+      const o = input.ownership;
+      await tx.insert(propertyOwnerships).values({
+        propertyId: created.id,
+        documentType: o.documentType,
+        documentNumber: o.documentNumber,
+        documentDate: o.documentDate ?? null,
+        issuingAuthority: o.issuingAuthority ?? null,
+        ownerType: o.ownerType,
+        ownerName: o.ownerName,
+        identificationType: o.identificationType ?? null,
+        identificationNumber: o.identificationNumber ?? null,
+        commercialRegistration: o.commercialRegistration ?? null,
+        ownershipPercentage: o.ownershipPercentage ?? 100,
+        authorizedRepresentative: o.authorizedRepresentative ?? null,
+        notes: o.notes ?? null,
+      });
+    }
 
     await recordAudit(tx, {
       organizationId: actor.organizationId,
