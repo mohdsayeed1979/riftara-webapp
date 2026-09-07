@@ -1,0 +1,54 @@
+name: CI
+
+# Validates every push and pull request: typecheck, lint, tests and a
+# production build. No deployment and no production secrets are required —
+# the app runs its checks against the embedded PGlite database.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Typecheck · Lint · Test · Build
+    runs-on: ubuntu-latest
+
+    env:
+      # CI-only, non-production values. The test suite provisions isolated
+      # embedded databases; no external services are contacted.
+      NODE_ENV: test
+      DATABASE_DRIVER: pglite
+      AUTH_SECRET: ci-only-secret-value-at-least-32-characters-long
+      DEMO_MODE: 'true'
+      SEED_DEFAULT_PASSWORD: 'Riftara#2025'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm run test
+
+      - name: Production build
+        run: npm run build
