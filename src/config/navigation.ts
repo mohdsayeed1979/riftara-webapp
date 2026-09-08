@@ -93,6 +93,14 @@ export const NAV_GROUPS: NavGroup[] = [
         permission: 'contracts:view',
       },
       {
+        key: 'reservations',
+        href: '/leasing/reservations',
+        labelKey: 'nav.reservations',
+        icon: ClipboardList,
+        permission: 'reservations:view',
+        matches: ['/leasing/reservations'],
+      },
+      {
         key: 'tenants',
         href: '/tenants',
         labelKey: 'nav.tenants',

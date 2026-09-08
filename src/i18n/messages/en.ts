@@ -76,6 +76,7 @@ export const en = {
     collections: 'Collections',
     maintenance: 'Maintenance',
     tenants: 'Tenants',
+    reservations: 'Reservations',
     financials: 'Financials',
     reports: 'Reports',
     marketing: 'Marketing',

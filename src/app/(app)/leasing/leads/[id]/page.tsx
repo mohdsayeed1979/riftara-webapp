@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { isUuid } from '@/lib/utils';
 import { and, desc, eq } from 'drizzle-orm';
-import { CalendarClock, Target, User } from 'lucide-react';
+import { CalendarClock, FileSignature, Pencil, Target, User } from 'lucide-react';
 import { getDb } from '@/db/client';
 import {
   customers,
@@ -106,12 +106,30 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
           </>
         }
         actions={
-          <Button variant="secondary" asChild>
-            <Link href={`/leasing/customers/${lead.customerId}`}>
-              <User />
-              Customer 360
-            </Link>
-          </Button>
+          <>
+            {can(user, 'leasing:edit') ? (
+              <Button variant="secondary" asChild>
+                <Link href={`/leasing/leads/${id}/edit`}>
+                  <Pencil />
+                  Edit Lead
+                </Link>
+              </Button>
+            ) : null}
+            {can(user, 'reservations:create') ? (
+              <Button variant="secondary" asChild>
+                <Link href={`/leasing/reservations/new?customerId=${lead.customerId}&leadId=${id}`}>
+                  <FileSignature />
+                  Create Reservation
+                </Link>
+              </Button>
+            ) : null}
+            <Button variant="secondary" asChild>
+              <Link href={`/leasing/customers/${lead.customerId}`}>
+                <User />
+                Customer 360
+              </Link>
+            </Button>
+          </>
         }
       />
 

@@ -8,12 +8,14 @@ import {
   leadSources,
   leadStages,
   properties,
+  unitTypes,
   units,
   users,
 } from '@/db/schema';
 import { recordAudit } from '@/lib/audit';
 import { businessRuleViolation, notFound, validationError } from '@/lib/errors';
 import { getPolicy } from '@/lib/settings';
+import type { DbExecutor } from '@/db/types';
 import type { SessionUser } from '@/lib/auth/session';
 
 /**
@@ -457,4 +459,221 @@ export async function getAgentsForOrg(organizationId: string) {
     .from(users)
     .where(and(eq(users.organizationId, organizationId), eq(users.isActive, true), isNull(users.deletedAt)))
     .orderBy(users.fullName);
+}
+
+/* ---------------------------- Lead master-data --------------------------- */
+
+/** Reference data for the New / Edit Lead form. All organization-scoped and
+ *  loaded from the database. Only OPEN stages are offered for creation — won /
+ *  lost transitions go through moveLeadToStage (BR-006). */
+export async function getLeadFormReferenceData(organizationId: string) {
+  const db = await getDb();
+  const [stageRows, sourceRows, agentRows, propertyRows, typeRows, unitRows, customerRows] = await Promise.all([
+    db
+      .select({ id: leadStages.id, name: leadStages.nameEn, key: leadStages.key, stageType: leadStages.stageType, order: leadStages.pipelineOrder })
+      .from(leadStages)
+      .where(and(eq(leadStages.organizationId, organizationId), eq(leadStages.isActive, true)))
+      .orderBy(asc(leadStages.pipelineOrder)),
+    db
+      .select({ id: leadSources.id, name: leadSources.nameEn })
+      .from(leadSources)
+      .where(and(eq(leadSources.organizationId, organizationId), eq(leadSources.isActive, true)))
+      .orderBy(asc(leadSources.sortOrder)),
+    db
+      .select({ id: users.id, name: users.fullName })
+      .from(users)
+      .where(and(eq(users.organizationId, organizationId), eq(users.isActive, true), isNull(users.deletedAt)))
+      .orderBy(asc(users.fullName)),
+    db
+      .select({ id: properties.id, name: properties.nameEn })
+      .from(properties)
+      .where(and(eq(properties.organizationId, organizationId), isNull(properties.deletedAt)))
+      .orderBy(asc(properties.nameEn)),
+    db
+      .select({ id: unitTypes.id, name: unitTypes.nameEn })
+      .from(unitTypes)
+      .where(and(eq(unitTypes.organizationId, organizationId), eq(unitTypes.isActive, true)))
+      .orderBy(asc(unitTypes.sortOrder)),
+    db
+      .select({ id: units.id, unitNumber: units.unitNumber, propertyId: units.propertyId })
+      .from(units)
+      .where(and(eq(units.organizationId, organizationId), isNull(units.deletedAt)))
+      .orderBy(asc(units.unitNumber)),
+    db
+      .select({ id: customers.id, name: customers.fullNameEn, code: customers.code })
+      .from(customers)
+      .where(and(eq(customers.organizationId, organizationId), isNull(customers.deletedAt)))
+      .orderBy(asc(customers.fullNameEn))
+      .limit(1000),
+  ]);
+  return {
+    stages: stageRows,
+    openStages: stageRows.filter((s) => s.stageType === 'open'),
+    sources: sourceRows,
+    agents: agentRows,
+    properties: propertyRows,
+    unitTypes: typeRows,
+    units: unitRows,
+    customers: customerRows,
+  };
+}
+
+async function nextLeadCode(executor: DbExecutor, organizationId: string): Promise<string> {
+  const [{ total }] = await executor.select({ total: count() }).from(leads).where(eq(leads.organizationId, organizationId));
+  return `LEAD-${String(Number(total) + 1).padStart(4, '0')}`;
+}
+
+export interface LeadWriteInput {
+  sourceId?: string | null;
+  assignedUserId?: string | null;
+  requestedPropertyId?: string | null;
+  requestedUnitId?: string | null;
+  requestedUnitTypeId?: string | null;
+  requiredArea?: number | null;
+  budgetMin?: number | null;
+  budgetMax?: number | null;
+  moveInDate?: string | null;
+  priority?: string;
+  nextAction?: string | null;
+  notes?: string | null;
+}
+
+export interface CreateLeadInput extends LeadWriteInput {
+  customerId: string;
+  stageId?: string | null;
+}
+
+/** Validates the optional reference ids against org-scoped data. Returns the
+ *  resolved requested-unit id (must belong to the requested property). */
+async function resolveLeadRefs(
+  tx: DbExecutor,
+  organizationId: string,
+  input: LeadWriteInput,
+): Promise<{ requestedUnitId: string | null }> {
+  if (input.requestedPropertyId) {
+    const [p] = await tx.select({ id: properties.id }).from(properties)
+      .where(and(eq(properties.id, input.requestedPropertyId), eq(properties.organizationId, organizationId), isNull(properties.deletedAt))).limit(1);
+    if (!p) throw validationError('The requested property is not valid for this organization.');
+  }
+  let requestedUnitId: string | null = null;
+  if (input.requestedUnitId) {
+    const [u] = await tx.select({ id: units.id, propertyId: units.propertyId }).from(units)
+      .where(and(eq(units.id, input.requestedUnitId), eq(units.organizationId, organizationId), isNull(units.deletedAt))).limit(1);
+    if (!u) throw validationError('The requested unit is not valid for this organization.');
+    if (input.requestedPropertyId && u.propertyId !== input.requestedPropertyId) {
+      throw validationError('The requested unit does not belong to the requested property.');
+    }
+    requestedUnitId = u.id;
+  }
+  return { requestedUnitId };
+}
+
+function leadValues(input: LeadWriteInput, requestedUnitId: string | null) {
+  return {
+    sourceId: input.sourceId ?? null,
+    assignedUserId: input.assignedUserId ?? null,
+    requestedPropertyId: input.requestedPropertyId ?? null,
+    requestedUnitId,
+    requestedUnitTypeId: input.requestedUnitTypeId ?? null,
+    requiredArea: input.requiredArea ?? null,
+    budgetMin: input.budgetMin ?? null,
+    budgetMax: input.budgetMax ?? null,
+    moveInDate: input.moveInDate ?? null,
+    priority: (input.priority ?? 'medium') as 'low' | 'medium' | 'high' | 'critical',
+    nextAction: input.nextAction ?? null,
+    notes: input.notes ?? null,
+  };
+}
+
+export async function createLead(actor: SessionUser, input: CreateLeadInput): Promise<{ id: string }> {
+  const db = await getDb();
+  return db.transaction(async (tx) => {
+    // Customer must exist within the organization (leads.customerId is NOT NULL).
+    const [customer] = await tx.select({ id: customers.id }).from(customers)
+      .where(and(eq(customers.id, input.customerId), eq(customers.organizationId, actor.organizationId), isNull(customers.deletedAt))).limit(1);
+    if (!customer) throw notFound('Customer', input.customerId);
+
+    // Resolve the stage: default to the first OPEN stage; a supplied stage must
+    // be OPEN (won/lost closures go through moveLeadToStage — BR-006).
+    const stages = await tx
+      .select({ id: leadStages.id, stageType: leadStages.stageType, order: leadStages.pipelineOrder })
+      .from(leadStages)
+      .where(and(eq(leadStages.organizationId, actor.organizationId), eq(leadStages.isActive, true)))
+      .orderBy(asc(leadStages.pipelineOrder));
+    let stageId = input.stageId ?? null;
+    if (stageId) {
+      const chosen = stages.find((s) => s.id === stageId);
+      if (!chosen) throw validationError('The selected stage is not valid for this organization.');
+      if (chosen.stageType !== 'open') throw validationError('New leads must start in an open stage. Use the pipeline to close a lead.');
+    } else {
+      const firstOpen = stages.find((s) => s.stageType === 'open');
+      if (!firstOpen) throw validationError('No open lead stage is configured.');
+      stageId = firstOpen.id;
+    }
+
+    const refs = await resolveLeadRefs(tx, actor.organizationId, input);
+    const code = await nextLeadCode(tx, actor.organizationId);
+    const [created] = await tx
+      .insert(leads)
+      .values({
+        organizationId: actor.organizationId, // session org only — never client-supplied
+        code,
+        customerId: input.customerId,
+        stageId,
+        campaignId: null,
+        assignedAt: input.assignedUserId ? new Date() : null,
+        ...leadValues(input, refs.requestedUnitId),
+      })
+      .returning({ id: leads.id });
+
+    await recordAudit(tx, {
+      organizationId: actor.organizationId,
+      action: 'create',
+      entityType: 'lead',
+      entityId: created.id,
+      entityLabel: code,
+      newValue: { code, customerId: input.customerId, stageId },
+      actor: { id: actor.id, fullName: actor.fullName },
+    });
+    return created;
+  });
+}
+
+/** Updates general lead fields. Stage and customer are immutable here — stage
+ *  changes go through moveLeadToStage (BR-006 preserved). */
+export async function updateLead(actor: SessionUser, leadId: string, input: LeadWriteInput): Promise<{ id: string }> {
+  const db = await getDb();
+  return db.transaction(async (tx) => {
+    const [existing] = await tx.select({ id: leads.id, code: leads.code, assignedUserId: leads.assignedUserId }).from(leads)
+      .where(and(eq(leads.id, leadId), eq(leads.organizationId, actor.organizationId), isNull(leads.deletedAt))).limit(1);
+    if (!existing) throw notFound('Lead', leadId);
+
+    const refs = await resolveLeadRefs(tx, actor.organizationId, input);
+    await tx
+      .update(leads)
+      .set({
+        ...leadValues(input, refs.requestedUnitId),
+        assignedAt: input.assignedUserId && input.assignedUserId !== existing.assignedUserId ? new Date() : undefined,
+        updatedAt: new Date(),
+      })
+      .where(eq(leads.id, leadId));
+
+    await recordAudit(tx, {
+      organizationId: actor.organizationId,
+      action: 'update',
+      entityType: 'lead',
+      entityId: leadId,
+      entityLabel: existing.code,
+      newValue: input,
+      actor: { id: actor.id, fullName: actor.fullName },
+    });
+    return { id: leadId };
+  });
+}
+
+export async function getLeadForEdit(organizationId: string, leadId: string) {
+  const db = await getDb();
+  const [lead] = await db.select().from(leads)
+    .where(and(eq(leads.id, leadId), eq(leads.organizationId, organizationId), isNull(leads.deletedAt))).limit(1);
+  return lead ?? null;
 }

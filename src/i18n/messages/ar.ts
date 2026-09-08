@@ -77,6 +77,7 @@ export const ar: Messages = {
     collections: 'التحصيل',
     maintenance: 'الصيانة',
     tenants: 'المستأجرون',
+    reservations: 'الحجوزات',
     financials: 'الشؤون المالية',
     reports: 'التقارير',
     marketing: 'التسويق',
