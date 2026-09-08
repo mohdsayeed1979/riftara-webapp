@@ -1,10 +1,11 @@
 import 'server-only';
 import { and, asc, count, desc, eq, ilike, isNull, or } from 'drizzle-orm';
 import { getDb } from '@/db/client';
-import { buildings, contracts, customers, floors, leads, properties, reservations, units } from '@/db/schema';
+import { buildings, contracts, customers, floors, leads, properties, proposals, reservations, units } from '@/db/schema';
 import { recordAudit } from '@/lib/audit';
 import { conflict, notFound, validationError } from '@/lib/errors';
 import { computeUnitAvailability } from './availability-service';
+import { isProposalReservable } from './proposal-service';
 import type { DbExecutor } from '@/db/types';
 import type { SessionUser } from '@/lib/auth/session';
 
@@ -44,6 +45,7 @@ async function nextReservationCode(executor: DbExecutor, organizationId: string)
 export interface CreateReservationInput {
   customerId: string;
   leadId?: string | null;
+  proposalId?: string | null;
   propertyId: string;
   unitId: string;
   reservationDate: string;
@@ -82,6 +84,17 @@ export async function createReservation(actor: SessionUser, input: CreateReserva
   const created = await db.transaction(async (tx) => {
     await validateHierarchy(tx, actor.organizationId, input);
 
+    // A reservation created from a proposal requires an approved/accepted
+    // proposal — draft / pending / rejected cannot reserve (BR-004 safety).
+    if (input.proposalId) {
+      const [proposal] = await tx.select({ id: proposals.id, status: proposals.status }).from(proposals)
+        .where(and(eq(proposals.id, input.proposalId), eq(proposals.organizationId, actor.organizationId), isNull(proposals.deletedAt))).limit(1);
+      if (!proposal) throw validationError('The selected proposal is not valid for this organization.');
+      if (!isProposalReservable(proposal.status)) {
+        throw conflict('This proposal has not been approved yet. Approve the proposal before creating a reservation.');
+      }
+    }
+
     // Friendly BR-002 pre-check (the partial unique index is authoritative).
     const [activeExisting] = await tx.select({ code: reservations.code }).from(reservations)
       .where(and(eq(reservations.unitId, input.unitId), eq(reservations.isActive, true), isNull(reservations.deletedAt))).limit(1);
@@ -97,6 +110,7 @@ export async function createReservation(actor: SessionUser, input: CreateReserva
         code,
         customerId: input.customerId,
         leadId: input.leadId ?? null,
+        proposalId: input.proposalId ?? null,
         propertyId: input.propertyId,
         unitId: input.unitId,
         reservationDate: input.reservationDate,

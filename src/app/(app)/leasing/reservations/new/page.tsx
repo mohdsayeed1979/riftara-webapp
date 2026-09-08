@@ -11,7 +11,7 @@ export const metadata: Metadata = { title: 'New Reservation' };
 export default async function NewReservationPage({
   searchParams,
 }: {
-  searchParams: Promise<{ customerId?: string; unitId?: string; leadId?: string }>;
+  searchParams: Promise<{ customerId?: string; unitId?: string; leadId?: string; proposalId?: string }>;
 }) {
   const user = await requirePermission('reservations:create');
   const sp = await searchParams;
@@ -23,6 +23,7 @@ export default async function NewReservationPage({
     initial.leadId = sp.leadId;
     if (!initial.customerId) initial.customerId = reference.leads.find((l) => l.id === sp.leadId)?.customerId;
   }
+  if (sp.proposalId && isUuid(sp.proposalId)) initial.proposalId = sp.proposalId;
   if (sp.unitId && isUuid(sp.unitId)) {
     const unit = reference.units.find((u) => u.id === sp.unitId);
     if (unit) { initial.unitId = unit.id; initial.propertyId = unit.propertyId; }

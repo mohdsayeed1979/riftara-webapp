@@ -23,6 +23,7 @@ export interface ReservationFormReference {
 export interface ReservationFormInitial {
   customerId?: string;
   leadId?: string;
+  proposalId?: string;
   propertyId?: string;
   unitId?: string;
 }
@@ -87,6 +88,7 @@ export function ReservationForm({ reference, initial }: { reference: Reservation
     <form action={formAction} className="flex flex-col gap-5">
       <input type="hidden" name="customerId" value={customerId} />
       <input type="hidden" name="leadId" value={leadId} />
+      {initial?.proposalId ? <input type="hidden" name="proposalId" value={initial.proposalId} /> : null}
       <input type="hidden" name="propertyId" value={propertyId} />
       <input type="hidden" name="unitId" value={unitId} />
 

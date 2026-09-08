@@ -26,6 +26,7 @@ const schema = z
   .object({
     customerId: z.string().uuid('Select a customer.'),
     leadId: optUuid,
+    proposalId: optUuid,
     propertyId: z.string().uuid('Select a property.'),
     unitId: z.string().uuid('Select a unit.'),
     reservationDate: isoDate('Enter a valid reservation date.'),
@@ -56,6 +57,7 @@ function readForm(formData: FormData) {
   return {
     customerId: g('customerId'),
     leadId: g('leadId'),
+    proposalId: g('proposalId'),
     propertyId: g('propertyId'),
     unitId: g('unitId'),
     reservationDate: g('reservationDate'),
@@ -82,6 +84,7 @@ function toInput(data: ParsedReservation): CreateReservationInput {
   return {
     customerId: data.customerId,
     leadId: data.leadId ?? null,
+    proposalId: data.proposalId ?? null,
     propertyId: data.propertyId,
     unitId: data.unitId,
     reservationDate: data.reservationDate,

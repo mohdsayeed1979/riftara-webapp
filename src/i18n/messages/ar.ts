@@ -73,6 +73,8 @@ export const ar: Messages = {
     units: 'الوحدات',
     leasingCrm: 'إدارة علاقات التأجير',
     customers: 'العملاء',
+    viewings: 'المعاينات',
+    proposals: 'العروض',
     contracts: 'العقود',
     collections: 'التحصيل',
     maintenance: 'الصيانة',
