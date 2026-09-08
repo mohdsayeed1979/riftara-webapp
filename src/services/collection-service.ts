@@ -3,17 +3,22 @@ import { and, asc, count, desc, eq, ilike, inArray, isNull, sql, type SQL } from
 import { getDb } from '@/db/client';
 import {
   collectionActions,
+  contracts,
+  customers,
   invoices,
+  notifications,
   paymentAllocations,
+  paymentSchedules,
   payments,
   properties,
   tenantLedgerEntries,
   tenants,
   units,
+  users,
 } from '@/db/schema';
 import type { DbExecutor } from '@/db/types';
 import { recordAudit } from '@/lib/audit';
-import { notFound, validationError } from '@/lib/errors';
+import { conflict, notFound, validationError } from '@/lib/errors';
 import { allocatePayment, daysOverdue, deriveInvoiceStatus } from '@/lib/calculations/finance';
 import { getPolicy } from '@/lib/settings';
 import { round2 } from '@/lib/utils';
@@ -464,4 +469,591 @@ async function nextSequence(
     .from(payments)
     .where(eq(payments.organizationId, organizationId));
   return `${prefix}-${String(Number(total) + 1).padStart(width, '0')}`;
+}
+
+async function nextInvoiceNumber(executor: DbExecutor, organizationId: string): Promise<string> {
+  const [{ total }] = await executor
+    .select({ total: count() })
+    .from(invoices)
+    .where(eq(invoices.organizationId, organizationId));
+  return `INV-${String(Number(total) + 1).padStart(6, '0')}`;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Invoice detail (BRD 45)                                                     */
+/* -------------------------------------------------------------------------- */
+
+/** Full invoice view with tenant/customer, property/unit, contract, payment
+ *  allocations and the collection-action history. Read-only; all financial
+ *  figures come from the stored authoritative columns (no re-computation). */
+export async function getInvoiceDetail(organizationId: string, invoiceId: string) {
+  const db = await getDb();
+  const [row] = await db
+    .select({
+      id: invoices.id,
+      invoiceNumber: invoices.invoiceNumber,
+      status: invoices.status,
+      invoiceDate: invoices.invoiceDate,
+      dueDate: invoices.dueDate,
+      periodStart: invoices.periodStart,
+      periodEnd: invoices.periodEnd,
+      rentAmount: invoices.rentAmount,
+      serviceChargeAmount: invoices.serviceChargeAmount,
+      vatAmount: invoices.vatAmount,
+      otherChargesAmount: invoices.otherChargesAmount,
+      totalAmount: invoices.totalAmount,
+      paidAmount: invoices.paidAmount,
+      balanceAmount: invoices.balanceAmount,
+      notes: invoices.notes,
+      tenantId: invoices.tenantId,
+      tenantName: tenants.displayName,
+      customerId: tenants.customerId,
+      customerName: customers.fullNameEn,
+      propertyId: invoices.propertyId,
+      propertyName: properties.nameEn,
+      unitId: invoices.unitId,
+      unitNumber: units.unitNumber,
+      contractId: invoices.contractId,
+      contractNumber: contracts.contractNumber,
+    })
+    .from(invoices)
+    .innerJoin(tenants, eq(tenants.id, invoices.tenantId))
+    .innerJoin(customers, eq(customers.id, tenants.customerId))
+    .innerJoin(properties, eq(properties.id, invoices.propertyId))
+    .innerJoin(units, eq(units.id, invoices.unitId))
+    .innerJoin(contracts, eq(contracts.id, invoices.contractId))
+    .where(and(eq(invoices.id, invoiceId), eq(invoices.organizationId, organizationId), isNull(invoices.deletedAt)))
+    .limit(1);
+  if (!row) return null;
+
+  const allocations = await db
+    .select({
+      id: paymentAllocations.id,
+      amount: paymentAllocations.amount,
+      allocationMethod: paymentAllocations.allocationMethod,
+      reversedAt: paymentAllocations.reversedAt,
+      createdAt: paymentAllocations.createdAt,
+      paymentId: payments.id,
+      paymentNumber: payments.paymentNumber,
+      paymentDate: payments.paymentDate,
+      method: payments.method,
+      referenceNumber: payments.referenceNumber,
+    })
+    .from(paymentAllocations)
+    .innerJoin(payments, eq(payments.id, paymentAllocations.paymentId))
+    .where(eq(paymentAllocations.invoiceId, invoiceId))
+    .orderBy(desc(payments.paymentDate));
+
+  const actions = await db
+    .select({
+      id: collectionActions.id,
+      actionType: collectionActions.actionType,
+      daysOverdue: collectionActions.daysOverdue,
+      outstandingAmount: collectionActions.outstandingAmount,
+      notes: collectionActions.notes,
+      outcome: collectionActions.outcome,
+      createdAt: collectionActions.createdAt,
+      performedBy: users.fullName,
+    })
+    .from(collectionActions)
+    .leftJoin(users, eq(users.id, collectionActions.performedByUserId))
+    .where(and(eq(collectionActions.invoiceId, invoiceId), eq(collectionActions.organizationId, organizationId)))
+    .orderBy(desc(collectionActions.createdAt));
+
+  const now = new Date();
+  return {
+    invoice: {
+      ...row,
+      totalAmount: round2(Number(row.totalAmount)),
+      paidAmount: round2(Number(row.paidAmount)),
+      balanceAmount: round2(Number(row.balanceAmount)),
+      rentAmount: round2(Number(row.rentAmount)),
+      serviceChargeAmount: round2(Number(row.serviceChargeAmount)),
+      vatAmount: round2(Number(row.vatAmount)),
+      otherChargesAmount: round2(Number(row.otherChargesAmount)),
+      daysOverdue: daysOverdue(new Date(row.dueDate), now),
+    },
+    allocations: allocations.map((a) => ({ ...a, amount: round2(Number(a.amount)) })),
+    actions: actions.map((a) => ({ ...a, outstandingAmount: round2(Number(a.outstandingAmount)) })),
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Invoice generation from authoritative payment schedules (BRD 44)            */
+/* -------------------------------------------------------------------------- */
+
+export interface PendingScheduleRow {
+  scheduleId: string;
+  contractId: string;
+  contractNumber: string;
+  tenantName: string;
+  propertyName: string;
+  unitNumber: string;
+  installmentNumber: number;
+  invoiceDate: string;
+  dueDate: string;
+  totalAmount: number;
+}
+
+/** Payment-schedule installments that have not yet been turned into invoices. */
+export async function listPendingSchedules(
+  organizationId: string,
+  opts: { allowedPropertyIds?: string[] | null; onlyDue?: boolean; limit?: number } = {},
+): Promise<PendingScheduleRow[]> {
+  const db = await getDb();
+  const conditions: SQL[] = [
+    eq(paymentSchedules.organizationId, organizationId),
+    isNull(paymentSchedules.invoiceId),
+    inArray(contracts.status, ['signed', 'active']),
+  ];
+  if (opts.allowedPropertyIds?.length) conditions.push(inArray(contracts.propertyId, opts.allowedPropertyIds));
+  if (opts.onlyDue) conditions.push(sql`${paymentSchedules.invoiceDate} <= now()`);
+
+  const rows = await db
+    .select({
+      scheduleId: paymentSchedules.id,
+      contractId: paymentSchedules.contractId,
+      contractNumber: contracts.contractNumber,
+      tenantName: tenants.displayName,
+      propertyName: properties.nameEn,
+      unitNumber: units.unitNumber,
+      installmentNumber: paymentSchedules.installmentNumber,
+      invoiceDate: paymentSchedules.invoiceDate,
+      dueDate: paymentSchedules.dueDate,
+      totalAmount: paymentSchedules.totalAmount,
+    })
+    .from(paymentSchedules)
+    .innerJoin(contracts, eq(contracts.id, paymentSchedules.contractId))
+    .innerJoin(tenants, eq(tenants.id, contracts.tenantId))
+    .innerJoin(properties, eq(properties.id, contracts.propertyId))
+    .innerJoin(units, eq(units.id, contracts.unitId))
+    .where(and(...conditions))
+    .orderBy(asc(paymentSchedules.invoiceDate))
+    .limit(opts.limit ?? 100);
+
+  return rows.map((r) => ({ ...r, totalAmount: round2(Number(r.totalAmount)) }));
+}
+
+/** Generates one invoice from a payment-schedule installment. Amounts are taken
+ *  from the authoritative schedule row — never from client input. Idempotent:
+ *  a schedule already linked to an invoice returns that invoice unchanged
+ *  (duplicate prevention, BR-013). */
+export async function generateInvoiceFromSchedule(
+  actor: SessionUser,
+  scheduleId: string,
+): Promise<{ invoiceId: string; invoiceNumber: string; alreadyExisted: boolean }> {
+  const db = await getDb();
+  return db.transaction(async (tx) => {
+    const [sch] = await tx
+      .select({
+        id: paymentSchedules.id,
+        contractId: paymentSchedules.contractId,
+        invoiceId: paymentSchedules.invoiceId,
+        installmentNumber: paymentSchedules.installmentNumber,
+        periodStart: paymentSchedules.periodStart,
+        periodEnd: paymentSchedules.periodEnd,
+        invoiceDate: paymentSchedules.invoiceDate,
+        dueDate: paymentSchedules.dueDate,
+        rentAmount: paymentSchedules.rentAmount,
+        serviceChargeAmount: paymentSchedules.serviceChargeAmount,
+        vatAmount: paymentSchedules.vatAmount,
+        totalAmount: paymentSchedules.totalAmount,
+        contractStatus: contracts.status,
+        tenantId: contracts.tenantId,
+        propertyId: contracts.propertyId,
+        unitId: contracts.unitId,
+      })
+      .from(paymentSchedules)
+      .innerJoin(contracts, eq(contracts.id, paymentSchedules.contractId))
+      .where(and(eq(paymentSchedules.id, scheduleId), eq(paymentSchedules.organizationId, actor.organizationId)))
+      .limit(1);
+    if (!sch) throw notFound('Payment schedule', scheduleId);
+
+    if (sch.invoiceId) {
+      const [existing] = await tx
+        .select({ number: invoices.invoiceNumber })
+        .from(invoices)
+        .where(eq(invoices.id, sch.invoiceId))
+        .limit(1);
+      return { invoiceId: sch.invoiceId, invoiceNumber: existing?.number ?? '', alreadyExisted: true };
+    }
+
+    if (sch.contractStatus !== 'signed' && sch.contractStatus !== 'active') {
+      throw conflict('Invoices can only be generated for signed or active contracts.');
+    }
+
+    const invoiceNumber = await nextInvoiceNumber(tx, actor.organizationId);
+    const total = round2(Number(sch.totalAmount));
+    const status = deriveInvoiceStatus({
+      totalAmount: total,
+      paidAmount: 0,
+      dueDate: new Date(sch.dueDate),
+      invoiceDate: new Date(sch.invoiceDate),
+    });
+
+    const [created] = await tx
+      .insert(invoices)
+      .values({
+        organizationId: actor.organizationId,
+        invoiceNumber,
+        contractId: sch.contractId,
+        scheduleId: sch.id,
+        tenantId: sch.tenantId,
+        propertyId: sch.propertyId,
+        unitId: sch.unitId,
+        invoiceDate: sch.invoiceDate,
+        dueDate: sch.dueDate,
+        periodStart: sch.periodStart,
+        periodEnd: sch.periodEnd,
+        rentAmount: round2(Number(sch.rentAmount)),
+        serviceChargeAmount: round2(Number(sch.serviceChargeAmount)),
+        vatAmount: round2(Number(sch.vatAmount)),
+        otherChargesAmount: 0,
+        totalAmount: total,
+        paidAmount: 0,
+        balanceAmount: total,
+        status,
+      })
+      .returning({ id: invoices.id });
+
+    await tx
+      .update(paymentSchedules)
+      .set({ invoiceId: created.id, updatedAt: new Date() })
+      .where(eq(paymentSchedules.id, sch.id));
+
+    await appendLedgerEntry(tx, {
+      organizationId: actor.organizationId,
+      tenantId: sch.tenantId,
+      contractId: sch.contractId,
+      entryDate: sch.invoiceDate,
+      entryType: 'invoice',
+      description: `Invoice ${invoiceNumber} — installment ${sch.installmentNumber}`,
+      debit: total,
+      credit: 0,
+      invoiceId: created.id,
+      userId: actor.id,
+    });
+
+    await recordAudit(tx, {
+      organizationId: actor.organizationId,
+      action: 'create',
+      entityType: 'invoice',
+      entityId: created.id,
+      entityLabel: invoiceNumber,
+      newValue: { scheduleId: sch.id, contractId: sch.contractId, total },
+      actor: { id: actor.id, fullName: actor.fullName },
+    });
+
+    return { invoiceId: created.id, invoiceNumber, alreadyExisted: false };
+  });
+}
+
+/** Bulk-generates invoices for every due, un-invoiced installment in scope.
+ *  Each installment is generated in its own transaction and is idempotent. */
+export async function generateDueInvoices(
+  actor: SessionUser,
+  opts: { allowedPropertyIds?: string[] | null } = {},
+): Promise<{ generated: number; invoiceNumbers: string[] }> {
+  const pending = await listPendingSchedules(actor.organizationId, {
+    allowedPropertyIds: opts.allowedPropertyIds,
+    onlyDue: true,
+    limit: 500,
+  });
+  const invoiceNumbers: string[] = [];
+  for (const row of pending) {
+    const result = await generateInvoiceFromSchedule(actor, row.scheduleId);
+    if (!result.alreadyExisted) invoiceNumbers.push(result.invoiceNumber);
+  }
+  return { generated: invoiceNumbers.length, invoiceNumbers };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Dunning queue + collection-action history (BRD 47)                          */
+/* -------------------------------------------------------------------------- */
+
+export interface DunningRow {
+  tenantId: string;
+  tenantName: string;
+  outstanding: number;
+  overdue: number;
+  maxDaysOverdue: number;
+  invoiceCount: number;
+  recommendedAction: string | null;
+  lastActionType: string | null;
+  lastActionAt: string | null;
+}
+
+/** Tenants with overdue balances plus the recommended next collection action
+ *  derived from the configurable escalation ladder (policy). */
+export async function getDunningQueue(
+  organizationId: string,
+  allowedPropertyIds: string[] | null,
+): Promise<DunningRow[]> {
+  const db = await getDb();
+  const policy = await getPolicy(organizationId);
+  const ladder = [...policy.collectionEscalationLadder].sort((a, b) => a.daysOverdue - b.daysOverdue);
+
+  const conditions: SQL[] = [
+    eq(invoices.organizationId, organizationId),
+    eq(invoices.status, 'overdue'),
+    isNull(invoices.deletedAt),
+  ];
+  if (allowedPropertyIds?.length) conditions.push(inArray(invoices.propertyId, allowedPropertyIds));
+
+  const rows = await db
+    .select({
+      tenantId: invoices.tenantId,
+      tenantName: tenants.displayName,
+      outstanding: sql<number>`sum(${invoices.balanceAmount})::float8`,
+      minDue: sql<string>`min(${invoices.dueDate})`,
+      invoiceCount: sql<number>`count(*)::int`,
+    })
+    .from(invoices)
+    .innerJoin(tenants, eq(tenants.id, invoices.tenantId))
+    .where(and(...conditions))
+    .groupBy(invoices.tenantId, tenants.displayName)
+    .orderBy(desc(sql`sum(${invoices.balanceAmount})`));
+
+  const now = new Date();
+  const result: DunningRow[] = [];
+  for (const row of rows) {
+    const maxDaysOverdue = daysOverdue(new Date(row.minDue), now);
+    const step = [...ladder].reverse().find((s) => maxDaysOverdue >= s.daysOverdue);
+    const [last] = await db
+      .select({ actionType: collectionActions.actionType, createdAt: collectionActions.createdAt })
+      .from(collectionActions)
+      .where(and(eq(collectionActions.organizationId, organizationId), eq(collectionActions.tenantId, row.tenantId)))
+      .orderBy(desc(collectionActions.createdAt))
+      .limit(1);
+    result.push({
+      tenantId: row.tenantId,
+      tenantName: row.tenantName,
+      outstanding: round2(Number(row.outstanding)),
+      overdue: round2(Number(row.outstanding)),
+      maxDaysOverdue,
+      invoiceCount: Number(row.invoiceCount),
+      recommendedAction: step?.action ?? null,
+      lastActionType: last?.actionType ?? null,
+      lastActionAt: last ? last.createdAt.toISOString() : null,
+    });
+  }
+  return result;
+}
+
+/** Collection-action history for a tenant (most recent first). */
+export async function listCollectionActions(organizationId: string, tenantId: string) {
+  const db = await getDb();
+  return db
+    .select({
+      id: collectionActions.id,
+      actionType: collectionActions.actionType,
+      daysOverdue: collectionActions.daysOverdue,
+      outstandingAmount: collectionActions.outstandingAmount,
+      notes: collectionActions.notes,
+      outcome: collectionActions.outcome,
+      nextActionDate: collectionActions.nextActionDate,
+      createdAt: collectionActions.createdAt,
+      performedBy: users.fullName,
+    })
+    .from(collectionActions)
+    .leftJoin(users, eq(users.id, collectionActions.performedByUserId))
+    .where(and(eq(collectionActions.organizationId, organizationId), eq(collectionActions.tenantId, tenantId)))
+    .orderBy(desc(collectionActions.createdAt))
+    .limit(100);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Receivables rollups (BR-015)                                                */
+/* -------------------------------------------------------------------------- */
+
+export interface TenantReceivables {
+  totalInvoiced: number;
+  totalPaid: number;
+  outstanding: number;
+  overdue: number;
+  openInvoiceCount: number;
+}
+
+/** Per-tenant receivables totals from the authoritative invoice columns. */
+export async function getTenantReceivables(organizationId: string, tenantId: string): Promise<TenantReceivables> {
+  const db = await getDb();
+  const rows = await db
+    .select({
+      status: invoices.status,
+      total: invoices.totalAmount,
+      paid: invoices.paidAmount,
+      balance: invoices.balanceAmount,
+    })
+    .from(invoices)
+    .where(and(eq(invoices.organizationId, organizationId), eq(invoices.tenantId, tenantId), isNull(invoices.deletedAt)));
+
+  let totalInvoiced = 0;
+  let totalPaid = 0;
+  let outstanding = 0;
+  let overdue = 0;
+  let openInvoiceCount = 0;
+  for (const row of rows) {
+    if (row.status === 'cancelled' || row.status === 'waived') continue;
+    totalInvoiced += Number(row.total);
+    totalPaid += Number(row.paid);
+    outstanding += Number(row.balance);
+    if (Number(row.balance) > 0) openInvoiceCount += 1;
+    if (row.status === 'overdue') overdue += Number(row.balance);
+  }
+  return {
+    totalInvoiced: round2(totalInvoiced),
+    totalPaid: round2(totalPaid),
+    outstanding: round2(outstanding),
+    overdue: round2(overdue),
+    openInvoiceCount,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Statement rows (for CSV export)                                             */
+/* -------------------------------------------------------------------------- */
+
+export interface StatementRow {
+  invoiceNumber: string;
+  invoiceDate: string;
+  dueDate: string;
+  charges: number;
+  paid: number;
+  outstanding: number;
+  status: string;
+}
+
+/** Every invoice for a tenant, for a statement of account export. */
+export async function getTenantStatementRows(organizationId: string, tenantId: string): Promise<{ tenantName: string; rows: StatementRow[] }> {
+  const db = await getDb();
+  const [tenant] = await db
+    .select({ displayName: tenants.displayName })
+    .from(tenants)
+    .where(and(eq(tenants.id, tenantId), eq(tenants.organizationId, organizationId)))
+    .limit(1);
+  if (!tenant) throw notFound('Tenant', tenantId);
+
+  const rows = await db
+    .select({
+      invoiceNumber: invoices.invoiceNumber,
+      invoiceDate: invoices.invoiceDate,
+      dueDate: invoices.dueDate,
+      charges: invoices.totalAmount,
+      paid: invoices.paidAmount,
+      outstanding: invoices.balanceAmount,
+      status: invoices.status,
+    })
+    .from(invoices)
+    .where(and(eq(invoices.organizationId, organizationId), eq(invoices.tenantId, tenantId), isNull(invoices.deletedAt)))
+    .orderBy(asc(invoices.invoiceDate));
+
+  return {
+    tenantName: tenant.displayName,
+    rows: rows.map((r) => ({
+      invoiceNumber: r.invoiceNumber,
+      invoiceDate: r.invoiceDate,
+      dueDate: r.dueDate,
+      charges: round2(Number(r.charges)),
+      paid: round2(Number(r.paid)),
+      outstanding: round2(Number(r.outstanding)),
+      status: r.status,
+    })),
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Runtime overdue notification generation (BRD 46; idempotent)                */
+/* -------------------------------------------------------------------------- */
+
+/** Scans open invoices whose due date has passed, flips them to `overdue`
+ *  (audited), and creates a single `payment_overdue` notification per invoice.
+ *
+ *  Idempotent: an invoice that already has a `payment_overdue` notification is
+ *  never notified again, and an already-overdue invoice is not re-flipped. Safe
+ *  to invoke repeatedly (e.g. from a scheduled job) without creating duplicates.
+ *  This function performs no unbounded work at request time — it is capped and
+ *  intended to be driven by a scheduler, never by page loads. */
+export async function generateOverdueNotifications(
+  actor: { id: string | null; organizationId: string; fullName: string },
+): Promise<{ scanned: number; markedOverdue: number; notificationsCreated: number }> {
+  const db = await getDb();
+  const organizationId = actor.organizationId;
+
+  const candidates = await db
+    .select({
+      id: invoices.id,
+      invoiceNumber: invoices.invoiceNumber,
+      status: invoices.status,
+      dueDate: invoices.dueDate,
+      balance: invoices.balanceAmount,
+      tenantId: invoices.tenantId,
+    })
+    .from(invoices)
+    .where(
+      and(
+        eq(invoices.organizationId, organizationId),
+        inArray(invoices.status, ['due', 'partially_paid', 'overdue']),
+        isNull(invoices.deletedAt),
+        sql`${invoices.balanceAmount} > 0`,
+        sql`${invoices.dueDate} < now()`,
+      ),
+    )
+    .limit(500);
+
+  const now = new Date();
+  let markedOverdue = 0;
+  let notificationsCreated = 0;
+
+  for (const inv of candidates) {
+    const overdueDays = daysOverdue(new Date(inv.dueDate), now);
+
+    if (inv.status !== 'overdue') {
+      await db.transaction(async (tx) => {
+        await tx.update(invoices).set({ status: 'overdue', updatedAt: new Date() }).where(eq(invoices.id, inv.id));
+        await recordAudit(tx, {
+          organizationId,
+          action: 'update',
+          entityType: 'invoice',
+          entityId: inv.id,
+          entityLabel: inv.invoiceNumber,
+          previousValue: { status: inv.status },
+          newValue: { status: 'overdue', daysOverdue: overdueDays },
+          actor: actor.id ? { id: actor.id, fullName: actor.fullName } : undefined,
+        });
+      });
+      markedOverdue += 1;
+    }
+
+    // Idempotency guard: one payment_overdue notification per invoice, ever.
+    const [existing] = await db
+      .select({ id: notifications.id })
+      .from(notifications)
+      .where(
+        and(
+          eq(notifications.organizationId, organizationId),
+          eq(notifications.notificationType, 'payment_overdue'),
+          eq(notifications.entityType, 'invoice'),
+          eq(notifications.entityId, inv.id),
+        ),
+      )
+      .limit(1);
+    if (existing) continue;
+
+    const balance = round2(Number(inv.balance));
+    await db.insert(notifications).values({
+      organizationId,
+      userId: null,
+      requiredPermission: 'collections:view',
+      notificationType: 'payment_overdue',
+      severity: overdueDays > 60 || balance > 100_000 ? 'error' : 'warning',
+      title: `Invoice ${inv.invoiceNumber} is overdue`,
+      body: `${balance.toLocaleString()} SAR outstanding, ${overdueDays} day(s) past due.`,
+      linkHref: `/collections/invoices/${inv.id}`,
+      entityType: 'invoice',
+      entityId: inv.id,
+    });
+    notificationsCreated += 1;
+  }
+
+  return { scanned: candidates.length, markedOverdue, notificationsCreated };
 }

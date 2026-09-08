@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { CircleDollarSign, Clock, Download, Receipt, XCircle } from 'lucide-react';
+import { Bell, CircleDollarSign, Clock, Download, FileText, Receipt, XCircle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
@@ -88,6 +88,20 @@ export default async function CollectionsPage({
         subtitle="Monitor receivables, track collection performance and manage overdue accounts."
         actions={
           <>
+            <Button variant="secondary" asChild>
+              <Link href="/collections/dunning">
+                <Bell />
+                Dunning
+              </Link>
+            </Button>
+            {can(user, 'collections:create') ? (
+              <Button variant="secondary" asChild>
+                <Link href="/collections/invoices/generate">
+                  <FileText />
+                  Generate Invoices
+                </Link>
+              </Button>
+            ) : null}
             {can(user, 'collections:export') ? (
               <Button variant="secondary" asChild>
                 <a href="/api/v1/collections/export">
