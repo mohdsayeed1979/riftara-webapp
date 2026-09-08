@@ -9,7 +9,13 @@ export default defineConfig({
     testTimeout: 60_000,
     hookTimeout: 120_000,
     pool: 'forks',
-    poolOptions: { forks: { singleFork: true } },
+    maxWorkers: 1,
+    minWorkers: 1,
+    // Each integration file owns a temporary PGlite directory and removes it
+    // during cleanup. Keeping every file in one fork leaves later files with
+    // the first file's cached database runtime and lets the worker exit after
+    // its directory is removed. Isolate files at the worker boundary instead.
+    poolOptions: { forks: { singleFork: false } },
   },
   resolve: {
     alias: {

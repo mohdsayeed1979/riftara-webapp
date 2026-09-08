@@ -15,6 +15,7 @@ import {
 import {
   createProperty,
   getPropertyFormReferenceData,
+  updateProperty,
   type CreatePropertyInput,
 } from '@/services/property-service';
 
@@ -125,9 +126,13 @@ export async function createPropertyAction(
   formData: FormData,
 ): Promise<ActionResult<CreatePropertyResult>> {
   try {
+    const propertyId = opt(formData.get('propertyId'));
+    if (propertyId && !z.string().uuid().safeParse(propertyId).success) {
+      return { ok: false, error: { code: 'NOT_FOUND', message: 'Property not found.' } };
+    }
     // RBAC: authenticated user must hold properties:create. The org is taken
     // from the session — a client-supplied organizationId is never trusted.
-    const user = await requirePermission('properties:create');
+    const user = await requirePermission(propertyId ? 'properties:edit' : 'properties:create');
 
     const parsed = schema.safeParse({
       code: opt(formData.get('code')),
@@ -317,11 +322,16 @@ export async function createPropertyAction(
       ownership,
     };
 
-    const created = await createProperty(user, input);
+    // Editing deliberately excludes ownership. Ownership is a related record
+    // with its own lifecycle and the edit form must not replace it accidentally.
+    const created = propertyId
+      ? await updateProperty(user, propertyId, input)
+      : await createProperty(user, input);
     // Cache revalidation is best-effort: the property is already committed, so a
     // revalidation hiccup must never turn a successful create into an error.
     try {
       revalidatePath('/properties');
+      if (propertyId) revalidatePath(`/properties/${propertyId}`);
       revalidatePath('/dashboard');
     } catch {
       /* ignore — revalidation is a cache hint, not part of the transaction */

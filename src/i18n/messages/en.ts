@@ -198,6 +198,9 @@ export const en = {
     audit: 'Audit',
     ownership: 'Ownership',
     technical: 'Technical',
+    editTitle: 'Edit Property',
+    saveChanges: 'Save Changes',
+    saved: 'Property updated.',
   },
   units: {
     title: 'Units',

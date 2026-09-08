@@ -15,6 +15,7 @@ import {
   users,
 } from '@/db/schema';
 import { recordAudit } from '@/lib/audit';
+import { notFound } from '@/lib/errors';
 import type { SessionUser } from '@/lib/auth/session';
 import { occupancyRate } from '@/lib/calculations/metrics';
 import { round2 } from '@/lib/utils';
@@ -588,6 +589,66 @@ export async function createProperty(
     });
 
     return created;
+  });
+}
+
+/** Raw editable fields for the shared property form, always organization scoped. */
+export async function getPropertyForEdit(organizationId: string, propertyId: string) {
+  const db = await getDb();
+  const [property] = await db.select().from(properties)
+    .where(and(eq(properties.id, propertyId), eq(properties.organizationId, organizationId), isNull(properties.deletedAt)))
+    .limit(1);
+  return property ?? null;
+}
+
+/** Updates only the editable property fields.  Buildings, units and ownership
+ * records are intentionally not part of this operation: they have their own
+ * workflows and must never be overwritten by the property form. */
+export async function updateProperty(
+  actor: SessionUser,
+  propertyId: string,
+  input: Omit<CreatePropertyInput, 'ownership'>,
+): Promise<{ id: string }> {
+  const db = await getDb();
+  return db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select({ id: properties.id, code: properties.code, nameEn: properties.nameEn })
+      .from(properties)
+      .where(and(eq(properties.id, propertyId), eq(properties.organizationId, actor.organizationId), isNull(properties.deletedAt)))
+      .limit(1);
+    if (!existing) throw notFound('Property', propertyId);
+
+    const values = {
+      code: input.code, nameEn: input.nameEn, nameAr: input.nameAr ?? null,
+      propertyTypeId: input.propertyTypeId, usage: input.usage, status: input.status,
+      portfolioId: input.portfolioId ?? null, regionId: input.regionId ?? null, cityId: input.cityId,
+      districtId: input.districtId ?? null, addressLine: input.addressLine ?? null,
+      nationalAddress: input.nationalAddress ?? null, latitude: input.latitude ?? null,
+      longitude: input.longitude ?? null, googleMapsReference: input.googleMapsReference ?? null,
+      costCenter: input.costCenter ?? null, propertyManagerId: input.propertyManagerId ?? null,
+      leasingManagerId: input.leasingManagerId ?? null, assetManagerId: input.assetManagerId ?? null,
+      acquisitionDate: input.acquisitionDate ?? null, operationalStartDate: input.operationalStartDate ?? null,
+      landArea: input.landArea ?? null, builtUpArea: input.builtUpArea ?? null,
+      grossLeasableArea: input.grossLeasableArea ?? null, netLeasableArea: input.netLeasableArea ?? null,
+      commonArea: input.commonArea ?? null, parkingArea: input.parkingArea ?? null,
+      buildingCount: input.buildingCount ?? 0, floorCount: input.floorCount ?? 0, unitCount: input.unitCount ?? 0,
+      constructionYear: input.constructionYear ?? null, renovationYear: input.renovationYear ?? null,
+      condition: input.condition ?? null, parkingCapacity: input.parkingCapacity ?? null,
+      elevatorCount: input.elevatorCount ?? null, hvacType: input.hvacType ?? null,
+      electricalCapacity: input.electricalCapacity ?? null, waterInfrastructure: input.waterInfrastructure ?? null,
+      fireFightingSystem: input.fireFightingSystem ?? false, fireAlarmSystem: input.fireAlarmSystem ?? false,
+      generator: input.generator ?? false, buildingManagementSystem: input.buildingManagementSystem ?? false,
+      cctv: input.cctv ?? false, accessControl: input.accessControl ?? false,
+      loadingFacilities: input.loadingFacilities ?? false, emergencySystems: input.emergencySystems ?? false,
+      descriptionEn: input.descriptionEn ?? null, descriptionAr: input.descriptionAr ?? null, updatedAt: new Date(),
+    };
+    await tx.update(properties).set(values).where(eq(properties.id, propertyId));
+    await recordAudit(tx, {
+      organizationId: actor.organizationId, action: 'update', entityType: 'property', entityId: propertyId,
+      entityLabel: input.nameEn, previousValue: { code: existing.code, nameEn: existing.nameEn }, newValue: values,
+      actor: { id: actor.id, fullName: actor.fullName },
+    });
+    return { id: propertyId };
   });
 }
 

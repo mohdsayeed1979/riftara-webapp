@@ -83,6 +83,7 @@ const schema = z.object({
 
   API_RATE_LIMIT_PER_MINUTE: posInt(120),
   API_KEY_SALT: str('riftara-dev-api-key-salt'),
+  WEBSITE_WEBHOOK_SECRET: optionalStr(),
 });
 
 /** Dev-only AUTH_SECRET fallback (never used when NODE_ENV=production). */
@@ -135,6 +136,7 @@ const parsed = schema.safeParse({
   MAPBOX_TOKEN: process.env.NEXT_PUBLIC_MAPBOX_TOKEN,
   API_RATE_LIMIT_PER_MINUTE: process.env.API_RATE_LIMIT_PER_MINUTE,
   API_KEY_SALT: process.env.API_KEY_SALT,
+  WEBSITE_WEBHOOK_SECRET: process.env.WEBSITE_WEBHOOK_SECRET,
 });
 
 if (!parsed.success) {
@@ -163,7 +165,7 @@ export const integrationCredentials = {
   zoho: Boolean(process.env.ZOHO_CLIENT_ID && process.env.ZOHO_CLIENT_SECRET),
   monday: Boolean(process.env.MONDAY_API_TOKEN),
   erp: Boolean(process.env.ERP_API_BASE_URL && process.env.ERP_API_KEY),
-  website: Boolean(process.env.WEBSITE_WEBHOOK_SECRET),
+  website: Boolean(env.WEBSITE_WEBHOOK_SECRET),
   smtp: Boolean(process.env.SMTP_HOST && process.env.SMTP_USER),
 } as const;
 

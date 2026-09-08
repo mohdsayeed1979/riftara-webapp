@@ -82,6 +82,10 @@ maintenance.created · contract.expiring`
 - A website inquiry (`POST /api/v1/website/leads`) runs duplicate detection and
   creates/updates a CRM lead with full UTM attribution (BR-008), authenticated
   by the `WEBSITE_WEBHOOK_SECRET`.
+- Send that secret in `X-Riftara-Webhook-Secret`. The payload must include a
+  valid `propertyId` or `unitId`; RIFTARA derives the organization from that
+  server-validated reference and never accepts an organization id from the
+  public caller.
 
 ## Marketing & other integrations
 

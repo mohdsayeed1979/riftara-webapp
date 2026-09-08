@@ -158,3 +158,19 @@ export async function enforceRateLimit(principal: ApiPrincipal): Promise<void> {
     }
   }
 }
+
+/** Public webhook limiter. The caller supplies a server-derived identity; the
+ * client never controls its organization portion. */
+export async function enforcePublicRateLimit(identity: string, limit = 20): Promise<void> {
+  const headerList = await headers();
+  const ip = headerList.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'local';
+  const key = `public:${identity}:${ip}`;
+  const now = Date.now();
+  const bucket = buckets.get(key);
+  if (!bucket || bucket.resetAt <= now) {
+    buckets.set(key, { count: 1, resetAt: now + 60_000 });
+    return;
+  }
+  bucket.count += 1;
+  if (bucket.count > limit) throw new AppError('RATE_LIMITED', 'Too many requests. Please retry shortly.', { status: 429 });
+}

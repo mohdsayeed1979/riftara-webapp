@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useActionState } from 'react';
 import { Building2, Loader2, MapPin, ShieldCheck, Wrench } from 'lucide-react';
 import { toast } from 'sonner';
@@ -10,6 +10,7 @@ import { Card, CardBody, CardHeader } from '@/components/ui/card';
 import { Field, Input, Textarea } from '@/components/ui/input';
 import { Switch } from '@/components/ui/misc';
 import { cn } from '@/lib/utils';
+import { useI18n } from '@/i18n/provider';
 import {
   IDENTIFICATION_TYPES,
   OWNER_TYPES,
@@ -134,23 +135,31 @@ const FACILITIES = [
 export function PropertyForm({
   reference,
   suggestedCode,
+  propertyId,
+  initial,
 }: {
   reference: PropertyFormReference;
   suggestedCode: string;
+  propertyId?: string;
+  initial?: Record<string, string | boolean | null | undefined>;
 }) {
   const router = useRouter();
+  const { t } = useI18n();
   const [state, formAction, pending] = useActionState<ActionResult<CreatePropertyResult> | null, FormData>(
     createPropertyAction,
     null,
   );
 
   // Controlled geography for the Region -> City -> District hierarchy.
-  const [regionId, setRegionId] = useState('');
-  const [cityId, setCityId] = useState('');
-  const [districtId, setDistrictId] = useState('');
-  const [facilities, setFacilities] = useState<Record<string, boolean>>({});
+  const [regionId, setRegionId] = useState(initial?.regionId as string ?? '');
+  const [cityId, setCityId] = useState(initial?.cityId as string ?? '');
+  const [districtId, setDistrictId] = useState(initial?.districtId as string ?? '');
+  const [facilities, setFacilities] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(FACILITIES.map((facility) => [facility.name, initial?.[facility.name] === true])),
+  );
   const [formKey, setFormKey] = useState(0);
   const [mode, setMode] = useState<'save' | 'again'>('save');
+  const formRef = useRef<HTMLFormElement>(null);
 
   const cityOptions = useMemo(
     () => (regionId ? reference.cities.filter((c) => c.regionId === regionId) : reference.cities),
@@ -196,7 +205,7 @@ export function PropertyForm({
         setFormKey((k) => k + 1);
         if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
       } else {
-        toast.success('Property created.');
+        toast.success(propertyId ? t('properties.saved') : 'Property created.');
         router.push(`/properties/${state.data.id}`);
       }
     } else if (!state.fieldErrors) {
@@ -208,8 +217,20 @@ export function PropertyForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state]);
 
+  // The create and edit screens share one form. Populate ordinary controls
+  // from the server-scoped property record without making every field stateful.
+  useEffect(() => {
+    if (!initial || !formRef.current) return;
+    for (const [name, value] of Object.entries(initial)) {
+      if (typeof value !== 'string') continue;
+      const control = formRef.current.elements.namedItem(name) as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null;
+      if (control) control.value = value;
+    }
+  }, [initial]);
+
   return (
-    <form key={formKey} action={formAction} className="flex flex-col gap-5">
+    <form ref={formRef} key={formKey} action={formAction} className="flex flex-col gap-5">
+      {propertyId ? <input type="hidden" name="propertyId" value={propertyId} /> : null}
       {/* A. Basic Information */}
       <SectionCard icon={<Building2 className="size-4" />} title="Basic Information" description="Core identity of the property.">
         <div className="flex flex-col gap-4">
@@ -318,7 +339,7 @@ export function PropertyForm({
       </SectionCard>
 
       {/* D. Ownership Information */}
-      <SectionCard icon={<ShieldCheck className="size-4" />} title="Ownership Information" description="Optional — records the first owner and title document (Ejar-aligned).">
+      {!propertyId ? <SectionCard icon={<ShieldCheck className="size-4" />} title="Ownership Information" description="Optional — records the first owner and title document (Ejar-aligned).">
         <div className="flex flex-col gap-4">
           <div className={grid3}>
             <Field label="Owner Name" htmlFor="ownerName" error={err('ownerName')} hint="Fill to create an ownership record">
@@ -365,7 +386,7 @@ export function PropertyForm({
             <Textarea id="ownershipNotes" name="ownershipNotes" rows={2} />
           </Field>
         </div>
-      </SectionCard>
+      </SectionCard> : null}
 
       {/* E. Property Technical Information */}
       <SectionCard icon={<Wrench className="size-4" />} title="Property Technical Information" description="Areas, structure and building systems (BRD 9).">
@@ -474,7 +495,7 @@ export function PropertyForm({
         <Button type="button" variant="ghost" onClick={() => router.push('/properties')} disabled={pending}>
           Cancel
         </Button>
-        <Button
+        {!propertyId ? <Button
           type="submit"
           variant="secondary"
           loading={pending && mode === 'again'}
@@ -484,7 +505,7 @@ export function PropertyForm({
           }}
         >
           Save &amp; Add Another
-        </Button>
+        </Button> : null}
         <Button
           type="submit"
           loading={pending && mode === 'save'}
@@ -494,7 +515,7 @@ export function PropertyForm({
           }}
         >
           {pending ? <Loader2 className="size-4 animate-spin" /> : null}
-          Save Property
+          {propertyId ? t('properties.saveChanges') : 'Save Property'}
         </Button>
       </div>
     </form>

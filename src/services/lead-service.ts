@@ -536,6 +536,12 @@ export interface LeadWriteInput {
   priority?: string;
   nextAction?: string | null;
   notes?: string | null;
+  landingPage?: string | null;
+  utmSource?: string | null;
+  utmMedium?: string | null;
+  utmCampaign?: string | null;
+  utmContent?: string | null;
+  utmTerm?: string | null;
 }
 
 export interface CreateLeadInput extends LeadWriteInput {
@@ -582,6 +588,12 @@ function leadValues(input: LeadWriteInput, requestedUnitId: string | null) {
     priority: (input.priority ?? 'medium') as 'low' | 'medium' | 'high' | 'critical',
     nextAction: input.nextAction ?? null,
     notes: input.notes ?? null,
+    landingPage: input.landingPage ?? null,
+    utmSource: input.utmSource ?? null,
+    utmMedium: input.utmMedium ?? null,
+    utmCampaign: input.utmCampaign ?? null,
+    utmContent: input.utmContent ?? null,
+    utmTerm: input.utmTerm ?? null,
   };
 }
 

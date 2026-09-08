@@ -199,6 +199,9 @@ export const ar: Messages = {
     audit: 'سجل التدقيق',
     ownership: 'الملكية',
     technical: 'المواصفات الفنية',
+    editTitle: 'تعديل العقار',
+    saveChanges: 'حفظ التغييرات',
+    saved: 'تم تحديث العقار.',
   },
   units: {
     title: 'الوحدات',

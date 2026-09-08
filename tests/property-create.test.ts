@@ -238,3 +238,56 @@ describe('I. Successful creation writes an audit entry', () => {
     expect(rows[0].organizationId).toBe(admin.organizationId);
   });
 });
+
+describe('Phase 4C. Property edit', () => {
+  it('has an edit route protected by UUID and organization-scoped service updates', async () => {
+    const page = join(process.cwd(), 'src', 'app', '(app)', 'properties', '[id]', 'edit', 'page.tsx');
+    expect(existsSync(page)).toBe(true);
+    const { createPropertyAction } = await import('@/app/(app)/properties/actions');
+    const { updateProperty, getPropertyForEdit } = await import('@/services/property-service');
+    const { auditLogs, properties } = await import('@/db/schema');
+    getSessionMock.mockResolvedValue(admin);
+    const created = await createPropertyAction(null, baseForm({ nameEn: 'Editable Property' }));
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const edited = await updateProperty(admin, created.data.id, {
+      code: 'PROP-EDITED', nameEn: 'Edited Property', propertyTypeId: typeId, usage: 'commercial', status: 'active', cityId,
+    });
+    expect(edited.id).toBe(created.data.id);
+    expect((await getPropertyForEdit(admin.organizationId, created.data.id))?.nameEn).toBe('Edited Property');
+    expect(await getPropertyForEdit('00000000-0000-4000-8000-000000000000', created.data.id)).toBeNull();
+    const rows = await db.select().from(auditLogs).where(and(eq(auditLogs.entityType, 'property'), eq(auditLogs.entityId, created.data.id)));
+    expect(rows.some((row) => row.action === 'update')).toBe(true);
+    const [row] = await db.select({ code: properties.code }).from(properties).where(eq(properties.id, created.data.id));
+    expect(row.code).toBe('PROP-EDITED');
+  });
+
+  it('rejects an edit from a user without properties:edit (RBAC)', async () => {
+    const { createPropertyAction } = await import('@/app/(app)/properties/actions');
+    getSessionMock.mockResolvedValue(admin);
+    const created = await createPropertyAction(null, baseForm({ nameEn: 'Guarded Property' }));
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    getSessionMock.mockResolvedValue({ ...admin, permissions: [] });
+    const denied = await createPropertyAction(null, baseForm({ propertyId: created.data.id, nameEn: 'Should Not Save' }));
+    expect(denied.ok).toBe(false);
+    if (denied.ok) return;
+    expect(denied.error.code).toBe('FORBIDDEN');
+    getSessionMock.mockResolvedValue(admin);
+    const { getPropertyForEdit } = await import('@/services/property-service');
+    expect((await getPropertyForEdit(admin.organizationId, created.data.id))?.nameEn).toBe('Guarded Property');
+  });
+
+  it('does not update a property from another organization or a missing id', async () => {
+    const { updateProperty } = await import('@/services/property-service');
+    getSessionMock.mockResolvedValue(admin);
+    const { createPropertyAction } = await import('@/app/(app)/properties/actions');
+    const created = await createPropertyAction(null, baseForm({ nameEn: 'Isolated Property' }));
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const foreignActor = { ...admin, organizationId: '00000000-0000-4000-8000-000000000000' };
+    const values = { code: 'PROP-X', nameEn: 'Hijacked', propertyTypeId: typeId, usage: 'commercial', status: 'active', cityId };
+    await expect(updateProperty(foreignActor, created.data.id, values)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(updateProperty(admin, '00000000-0000-4000-8000-000000000000', values)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+});
