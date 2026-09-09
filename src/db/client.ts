@@ -1,4 +1,5 @@
 import { env } from '@/config/env';
+import { normalizeDriverParams } from './param-normalize';
 import * as schema from './schema';
 import type { Database } from './types';
 
@@ -14,6 +15,43 @@ import type { Database } from './types';
 
 /** Executes a multi-statement SQL script (used for constraint/trigger files). */
 export type ScriptRunner = (sqlText: string) => Promise<void>;
+
+/**
+ * Wraps a postgres-js client so every parameterized query — top-level and
+ * inside transactions — has its Date parameters normalized before serialization
+ * (see {@link normalizeDriverParams}). Drizzle executes ALL queries through
+ * `client.unsafe(query, params)` and runs transactions via `client.begin`, so
+ * intercepting those two methods (and re-wrapping the reserved transaction
+ * client) covers every code path. All other properties are delegated unchanged,
+ * including `client.options`, which drizzle mutates during construction.
+ */
+function withDateParamNormalization<T extends object>(client: T): T {
+  const wrap = (target: T): T =>
+    new Proxy(target, {
+      apply: (fn, thisArg, args) => Reflect.apply(fn as never, thisArg, args),
+      get(inner, prop, receiver) {
+        if (prop === 'unsafe') {
+          return (query: string, params?: unknown[], options?: unknown) =>
+            (inner as Record<string, (...a: unknown[]) => unknown>).unsafe(
+              query,
+              normalizeDriverParams(params),
+              options,
+            );
+        }
+        if (prop === 'begin') {
+          return (arg1: unknown, arg2?: unknown) => {
+            const begin = (inner as Record<string, (...a: unknown[]) => unknown>).begin;
+            return typeof arg1 === 'function'
+              ? begin((reserved: T) => (arg1 as (c: T) => unknown)(wrap(reserved)))
+              : begin(arg1, (reserved: T) => (arg2 as (c: T) => unknown)(wrap(reserved)));
+          };
+        }
+        const value = Reflect.get(inner, prop, receiver);
+        return typeof value === 'function' ? value.bind(inner) : value;
+      },
+    });
+  return wrap(client);
+}
 
 interface Connection {
   db: Database;
@@ -47,9 +85,13 @@ async function createConnection(): Promise<Connection> {
       connect_timeout: 15,
       prepare: false,
     });
+    // Normalize Date parameters at the driver boundary so raw `sql` fragments
+    // that interpolate a Date do not crash postgres-js (see normalizeDriverParams).
+    const normalizedSql = withDateParamNormalization(sql);
     return {
-      db: drizzle(sql, { schema }) as unknown as Database,
+      db: drizzle(normalizedSql, { schema }) as unknown as Database,
       // Simple query protocol — required for scripts containing several statements.
+      // Scripts take no bound parameters, so the raw client is used directly.
       runScript: async (sqlText: string) => {
         await sql.unsafe(sqlText).simple();
       },
