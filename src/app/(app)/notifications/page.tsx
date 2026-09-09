@@ -1,15 +1,19 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { and, desc, eq, inArray, or } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, or, type SQL } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { notifications } from '@/db/schema';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/misc';
 import { PageHeader } from '@/components/ui/page';
-import { requireUser } from '@/lib/auth/guard';
+import { Pagination } from '@/components/ui/table';
+import { RunNotificationsButton } from '@/features/admin/run-notifications-button';
+import { can, requireUser } from '@/lib/auth/guard';
 import { formatRelativeTime } from '@/lib/format';
 import { getRequestLocale } from '@/lib/locale';
 import { cn } from '@/lib/utils';
+
+const PAGE_SIZE = 30;
 
 export const metadata: Metadata = { title: 'Notifications' };
 export const dynamic = 'force-dynamic';
@@ -21,25 +25,30 @@ const SEVERITY_DOT: Record<string, string> = {
   error: 'bg-[var(--color-error)]',
 };
 
-export default async function NotificationsPage() {
+export default async function NotificationsPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const user = await requireUser();
+  const params = await searchParams;
+  const page = Math.max(1, Number(params.page) || 1);
   const locale = await getRequestLocale();
   const db = await getDb();
 
   const audience = user.permissions.length
     ? or(eq(notifications.userId, user.id), inArray(notifications.requiredPermission, user.permissions))
     : eq(notifications.userId, user.id);
+  const where = and(eq(notifications.organizationId, user.organizationId), audience) as SQL;
 
-  const rows = await db
-    .select()
-    .from(notifications)
-    .where(and(eq(notifications.organizationId, user.organizationId), audience))
-    .orderBy(desc(notifications.createdAt))
-    .limit(60);
+  const [rows, [{ total }]] = await Promise.all([
+    db.select().from(notifications).where(where).orderBy(desc(notifications.createdAt)).limit(PAGE_SIZE).offset((page - 1) * PAGE_SIZE),
+    db.select({ total: count() }).from(notifications).where(where),
+  ]);
 
   return (
     <div className="flex flex-col gap-5">
-      <PageHeader title="Notifications" subtitle="Alerts and reminders relevant to your role." />
+      <PageHeader
+        title="Notifications"
+        subtitle="Alerts and reminders relevant to your role."
+        actions={can(user, 'settings:manage') ? <RunNotificationsButton /> : undefined}
+      />
       <Card>
         {rows.length === 0 ? (
           <EmptyState title="You are all caught up" description="New notifications will appear here." />
@@ -64,6 +73,9 @@ export default async function NotificationsPage() {
             })}
           </ul>
         )}
+        {Number(total) > PAGE_SIZE ? (
+          <Pagination page={page} pageSize={PAGE_SIZE} total={Number(total)} buildHref={(p) => `/notifications?page=${p}`} />
+        ) : null}
       </Card>
     </div>
   );

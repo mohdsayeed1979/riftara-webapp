@@ -441,6 +441,17 @@ export const ar: Messages = {
     success: 'نجاح',
     failed: 'فشل',
   },
+  notifications: {
+    title: 'الإشعارات',
+    subtitle: 'التنبيهات والتذكيرات المتعلقة بدورك.',
+    runNow: 'تشغيل الآن',
+    allCaughtUp: 'لا توجد إشعارات جديدة',
+    contractExpiry: 'عقد قارب على الانتهاء',
+    reservationExpiry: 'حجز قارب على الانتهاء',
+    maintenanceDue: 'صيانة وقائية مستحقة',
+    followUpDue: 'متابعة مستحقة',
+    renewalRequired: 'مراجعة تجديد',
+  },
   validation: {
     requiredField: 'هذا الحقل مطلوب.',
     invalidEmail: 'أدخل بريداً إلكترونياً صحيحاً.',

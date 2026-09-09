@@ -440,6 +440,17 @@ export const en = {
     success: 'Success',
     failed: 'Failed',
   },
+  notifications: {
+    title: 'Notifications',
+    subtitle: 'Alerts and reminders relevant to your role.',
+    runNow: 'Run Now',
+    allCaughtUp: 'You are all caught up',
+    contractExpiry: 'Contract expiring',
+    reservationExpiry: 'Reservation expiring',
+    maintenanceDue: 'Preventive maintenance due',
+    followUpDue: 'Follow-up due',
+    renewalRequired: 'Renewal review',
+  },
   validation: {
     requiredField: 'This field is required.',
     invalidEmail: 'Enter a valid email address.',
