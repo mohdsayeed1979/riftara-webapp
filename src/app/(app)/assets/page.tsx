@@ -1,8 +1,6 @@
 import type { Metadata } from 'next';
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import Link from 'next/link';
 import { ShieldCheck } from 'lucide-react';
-import { getDb } from '@/db/client';
-import { maintenanceAssets, properties, vendors } from '@/db/schema';
 import { Card } from '@/components/ui/card';
 import { FilterBar } from '@/components/app/filter-bar';
 import { KpiCard } from '@/components/ui/kpi-card';
@@ -10,9 +8,21 @@ import { EmptyState } from '@/components/ui/misc';
 import { KpiGrid, PageHeader } from '@/components/ui/page';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Pagination, Table, TableContainer, TBody, TD, TH, THead, TR } from '@/components/ui/table';
-import { requirePermission } from '@/lib/auth/guard';
+import { can, requirePermission } from '@/lib/auth/guard';
 import { formatCompactCurrency, formatDate } from '@/lib/format';
 import { getRequestLocale } from '@/lib/locale';
+import {
+  ASSET_STATUSES,
+  ASSET_TYPES,
+  getAssetFormReferenceData,
+  getAssetKpis,
+  listAssets,
+  type AssetStatus,
+  type AssetType,
+} from '@/services/asset-service';
+import { AssetFormDialog } from '@/features/assets/asset-form';
+import { AssetRowActions, type AssetActionTarget } from '@/features/assets/asset-actions';
+import { assetStatusTone, humanizeAssetType } from '@/features/assets/status';
 
 export const metadata: Metadata = { title: 'Assets' };
 export const dynamic = 'force-dynamic';
@@ -28,50 +38,27 @@ export default async function AssetsPage({
   const params = await searchParams;
   const locale = await getRequestLocale();
   const page = Math.max(1, Number(params.page) || 1);
-  const db = await getDb();
+  const allowedPropertyIds = user.scopedPropertyIds.length ? user.scopedPropertyIds : null;
+  const scope = { organizationId: user.organizationId, allowedPropertyIds };
 
-  const where = and(
-    eq(maintenanceAssets.organizationId, user.organizationId),
-    isNull(maintenanceAssets.deletedAt),
-    params.assetType ? eq(maintenanceAssets.assetType, params.assetType) : undefined,
-  );
+  const canCreate = can(user, 'assets:create');
+  const canEdit = can(user, 'assets:edit');
+  const canDelete = can(user, 'assets:delete');
+  const showActions = canEdit || canDelete;
 
-  const [rows, totals] = await Promise.all([
-    db
-      .select({
-        id: maintenanceAssets.id,
-        code: maintenanceAssets.code,
-        nameEn: maintenanceAssets.nameEn,
-        assetType: maintenanceAssets.assetType,
-        propertyName: properties.nameEn,
-        location: maintenanceAssets.location,
-        status: maintenanceAssets.status,
-        purchaseCost: maintenanceAssets.purchaseCost,
-        warrantyExpiryDate: maintenanceAssets.warrantyExpiryDate,
-        nextServiceDate: maintenanceAssets.nextServiceDate,
-        lifetimeMaintenanceCost: maintenanceAssets.lifetimeMaintenanceCost,
-        vendorName: vendors.nameEn,
-      })
-      .from(maintenanceAssets)
-      .innerJoin(properties, eq(properties.id, maintenanceAssets.propertyId))
-      .leftJoin(vendors, eq(vendors.id, maintenanceAssets.supplierVendorId))
-      .where(where)
-      .orderBy(maintenanceAssets.code)
-      .limit(PAGE_SIZE)
-      .offset((page - 1) * PAGE_SIZE),
-    db
-      .select({
-        total: sql<number>`count(*)::int`,
-        operational: sql<number>`count(*) filter (where ${maintenanceAssets.status} = 'operational')::int`,
-        purchaseValue: sql<number>`coalesce(sum(${maintenanceAssets.purchaseCost}), 0)::float8`,
-        lifetimeCost: sql<number>`coalesce(sum(${maintenanceAssets.lifetimeMaintenanceCost}), 0)::float8`,
-      })
-      .from(maintenanceAssets)
-      .where(and(eq(maintenanceAssets.organizationId, user.organizationId), isNull(maintenanceAssets.deletedAt))),
+  const status = ASSET_STATUSES.includes(params.status as AssetStatus) ? (params.status as AssetStatus) : undefined;
+  const assetType = ASSET_TYPES.includes(params.assetType as AssetType) ? (params.assetType as AssetType) : undefined;
+  const propertyId = params.property && params.property !== '' ? params.property : undefined;
+
+  const [kpis, { items, total }, reference] = await Promise.all([
+    getAssetKpis(scope),
+    listAssets({ ...scope, search: params.search, status, propertyId, assetType, page, pageSize: PAGE_SIZE }),
+    canCreate || showActions ? getAssetFormReferenceData(user.organizationId) : Promise.resolve({ properties: [], buildings: [], vendors: [] }),
   ]);
 
-  const summary = totals[0];
   const money = (value: number) => formatCompactCurrency(value, { locale });
+
+  const propertyOptions = reference.properties.map((p) => ({ value: p.id, label: p.name }));
 
   const buildHref = (targetPage: number) => {
     const query = new URLSearchParams();
@@ -82,39 +69,64 @@ export default async function AssetsPage({
     return `/assets?${query.toString()}`;
   };
 
+  const toTarget = (asset: (typeof items)[number]): AssetActionTarget => ({
+    id: asset.id,
+    code: asset.code,
+    nameEn: asset.nameEn,
+    status: asset.status,
+    propertyId: asset.propertyId,
+    buildingId: asset.buildingId,
+    location: asset.location,
+    initial: {
+      nameEn: asset.nameEn,
+      nameAr: asset.nameAr ?? undefined,
+      assetType: asset.assetType,
+      location: asset.location ?? undefined,
+      manufacturer: asset.manufacturer ?? undefined,
+      modelNumber: asset.modelNumber ?? undefined,
+      serialNumber: asset.serialNumber ?? undefined,
+      supplierVendorId: asset.supplierVendorId ?? undefined,
+      purchaseDate: asset.purchaseDate ?? undefined,
+      purchaseCost: asset.purchaseCost != null ? String(asset.purchaseCost) : undefined,
+      warrantyExpiryDate: asset.warrantyExpiryDate ?? undefined,
+    },
+  });
+
   return (
     <div className="flex flex-col gap-5">
-      <PageHeader title="Asset Register" subtitle="Operational equipment across the portfolio." />
+      <PageHeader
+        title="Asset Register"
+        subtitle="Operational equipment across the portfolio."
+        actions={canCreate ? <AssetFormDialog mode="create" reference={reference} /> : undefined}
+      />
 
       <KpiGrid columns={4}>
-        <KpiCard label="Total Assets" value={String(Number(summary?.total ?? 0))} icon={<ShieldCheck />} tone="neutral" />
-        <KpiCard label="Operational" value={String(Number(summary?.operational ?? 0))} tone="success" ringValue={Number(summary?.total) > 0 ? (Number(summary?.operational) / Number(summary?.total)) * 100 : 0} />
-        <KpiCard label="Purchase Value" value={money(Number(summary?.purchaseValue ?? 0))} tone="gold" />
-        <KpiCard label="Lifetime Maintenance" value={money(Number(summary?.lifetimeCost ?? 0))} tone="warning" higherIsBetter={false} />
+        <KpiCard label="Total Assets" value={String(kpis.total)} icon={<ShieldCheck />} tone="neutral" />
+        <KpiCard label="Operational" value={String(kpis.operational)} tone="success" ringValue={kpis.total > 0 ? (kpis.operational / kpis.total) * 100 : 0} />
+        <KpiCard label="Purchase Value" value={money(kpis.purchaseValue)} tone="gold" />
+        <KpiCard label="Lifetime Maintenance" value={money(kpis.lifetimeMaintenanceCost)} tone="warning" higherIsBetter={false} />
       </KpiGrid>
 
       <FilterBar
-        searchPlaceholder="Search assets..."
+        searchPlaceholder="Search by name, code or serial..."
         filters={[
+          {
+            key: 'status',
+            placeholder: 'All Statuses',
+            options: ASSET_STATUSES.map((s) => ({ value: s, label: s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) })),
+          },
           {
             key: 'assetType',
             placeholder: 'All Types',
-            options: [
-              { value: 'elevator', label: 'Elevators' },
-              { value: 'chiller', label: 'Chillers' },
-              { value: 'generator', label: 'Generators' },
-              { value: 'pump', label: 'Pumps' },
-              { value: 'fire_panel', label: 'Fire Panels' },
-              { value: 'cctv', label: 'CCTV' },
-              { value: 'access_control', label: 'Access Control' },
-            ],
+            options: ASSET_TYPES.map((t) => ({ value: t, label: humanizeAssetType(t) })),
           },
+          ...(propertyOptions.length ? [{ key: 'property', placeholder: 'All Properties', options: propertyOptions }] : []),
         ]}
       />
 
       <Card>
-        {rows.length === 0 ? (
-          <EmptyState icon={<ShieldCheck />} title="No assets found" />
+        {items.length === 0 ? (
+          <EmptyState icon={<ShieldCheck />} title="No assets found" description="Create an asset or adjust your filters." />
         ) : (
           <>
             <TableContainer>
@@ -128,27 +140,38 @@ export default async function AssetsPage({
                     <TH alignment="end">Next Service</TH>
                     <TH alignment="end">Lifetime Cost</TH>
                     <TH alignment="center">Status</TH>
+                    {showActions ? <TH alignment="end">Actions</TH> : null}
                   </TR>
                 </THead>
                 <TBody>
-                  {rows.map((asset) => (
-                    <TR key={asset.id}>
+                  {items.map((asset) => (
+                    <TR key={asset.id} interactive>
                       <TD>
-                        <span className="font-medium">{asset.nameEn}</span>
+                        <Link href={`/assets/${asset.id}`} className="font-medium hover:text-[var(--color-info)]">
+                          {asset.nameEn}
+                        </Link>
                         <span className="block text-[11px] text-[var(--color-text-tertiary)]">{asset.code}</span>
                       </TD>
-                      <TD className="capitalize text-[var(--color-text-secondary)]">{asset.assetType.replace(/_/g, ' ')}</TD>
-                      <TD className="text-[var(--color-text-secondary)]">{asset.propertyName}</TD>
+                      <TD className="text-[var(--color-text-secondary)]">{humanizeAssetType(asset.assetType)}</TD>
+                      <TD className="text-[var(--color-text-secondary)]">
+                        {asset.propertyName}
+                        {asset.buildingName ? <span className="block text-[11px] text-[var(--color-text-tertiary)]">{asset.buildingName}</span> : null}
+                      </TD>
                       <TD className="text-[var(--color-text-secondary)]">{asset.location ?? '—'}</TD>
                       <TD alignment="end" className="whitespace-nowrap">{asset.nextServiceDate ? formatDate(asset.nextServiceDate, { locale, style: 'short' }) : '—'}</TD>
                       <TD alignment="end" numeric>{money(Number(asset.lifetimeMaintenanceCost))}</TD>
-                      <TD alignment="center"><StatusBadge status={asset.status === 'operational' ? 'active' : asset.status === 'under_maintenance' ? 'in_progress' : 'neutral'} label={asset.status.replace(/_/g, ' ')} dot={false} /></TD>
+                      <TD alignment="center"><StatusBadge status={asset.status} tone={assetStatusTone(asset.status)} label={humanizeAssetType(asset.status)} dot={false} /></TD>
+                      {showActions ? (
+                        <TD alignment="end">
+                          <AssetRowActions target={toTarget(asset)} reference={reference} permissions={{ canEdit, canDelete }} />
+                        </TD>
+                      ) : null}
                     </TR>
                   ))}
                 </TBody>
               </Table>
             </TableContainer>
-            <Pagination page={page} pageSize={PAGE_SIZE} total={Number(summary?.total ?? 0)} buildHref={buildHref} />
+            <Pagination page={page} pageSize={PAGE_SIZE} total={total} buildHref={buildHref} />
           </>
         )}
       </Card>
