@@ -46,6 +46,9 @@ const writeSchema = z.object({
   purchaseDate: z.string().trim().max(10).optional(),
   purchaseCost: z.coerce.number().nonnegative('Must be zero or more.').optional(),
   warrantyExpiryDate: z.string().trim().max(10).optional(),
+  usefulLifeYears: z.coerce.number().int('Whole years only.').positive('Must be greater than zero.').max(200, 'Unrealistic useful life.').optional(),
+  residualValue: z.coerce.number().nonnegative('Must be zero or more.').optional(),
+  depreciationMethod: z.enum(['straight_line']).optional(),
 });
 
 function readWriteForm(formData: FormData) {
@@ -65,6 +68,9 @@ function readWriteForm(formData: FormData) {
     purchaseDate: g('purchaseDate'),
     purchaseCost: g('purchaseCost'),
     warrantyExpiryDate: g('warrantyExpiryDate'),
+    usefulLifeYears: g('usefulLifeYears'),
+    residualValue: g('residualValue'),
+    depreciationMethod: g('depreciationMethod'),
   };
 }
 

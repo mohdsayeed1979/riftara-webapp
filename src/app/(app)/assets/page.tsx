@@ -89,6 +89,9 @@ export default async function AssetsPage({
       purchaseDate: asset.purchaseDate ?? undefined,
       purchaseCost: asset.purchaseCost != null ? String(asset.purchaseCost) : undefined,
       warrantyExpiryDate: asset.warrantyExpiryDate ?? undefined,
+      usefulLifeYears: asset.usefulLifeYears != null ? String(asset.usefulLifeYears) : undefined,
+      residualValue: asset.residualValue != null ? String(asset.residualValue) : undefined,
+      depreciationMethod: asset.depreciationMethod ?? undefined,
     },
   });
 

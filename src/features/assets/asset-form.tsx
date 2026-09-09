@@ -33,6 +33,9 @@ export interface AssetFormInitial {
   purchaseDate?: string;
   purchaseCost?: string;
   warrantyExpiryDate?: string;
+  usefulLifeYears?: string;
+  residualValue?: string;
+  depreciationMethod?: string;
 }
 
 const TYPE_OPTIONS = ASSET_TYPES.map((t) => ({ id: t, name: humanizeAssetType(t) }));
@@ -165,6 +168,18 @@ export function AssetFormDialog({
               </Field>
               <Field label="Warranty Expiry" error={fieldErrors?.warrantyExpiryDate?.[0]}>
                 <Input type="date" name="warrantyExpiryDate" defaultValue={initial?.warrantyExpiryDate} />
+              </Field>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <Field label="Useful Life (Years)" error={fieldErrors?.usefulLifeYears?.[0]} hint="Enables straight-line depreciation.">
+                <Input type="number" name="usefulLifeYears" min={1} max={200} step="1" defaultValue={initial?.usefulLifeYears} placeholder="e.g. 10" />
+              </Field>
+              <Field label="Residual / Salvage Value" error={fieldErrors?.residualValue?.[0]}>
+                <Input type="number" name="residualValue" min={0} step="0.01" defaultValue={initial?.residualValue} placeholder="0.00" />
+              </Field>
+              <Field label="Depreciation Method">
+                <NativeSelect name="depreciationMethod" defaultValue={initial?.depreciationMethod ?? 'straight_line'} options={[{ id: 'straight_line', name: 'Straight Line' }]} />
               </Field>
             </div>
           </DialogBody>

@@ -12,10 +12,13 @@ import { isUuid } from '@/lib/utils';
 import { formatCurrency, formatDate, formatDateTime } from '@/lib/format';
 import { getRequestLocale } from '@/lib/locale';
 import {
+  calculateAssetDepreciation,
   getAsset,
   getAssetAuditHistory,
   getAssetFormReferenceData,
   getAssetMaintenanceHistory,
+  getAssetMaintenanceSummary,
+  getAssetValuationContext,
 } from '@/services/asset-service';
 import { AssetDetailActions, type AssetActionTarget } from '@/features/assets/asset-actions';
 import { assetStatusTone, humanizeAssetType } from '@/features/assets/status';
@@ -48,11 +51,22 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
   const canDelete = can(user, 'assets:delete');
   const disposed = asset.status === 'decommissioned';
 
-  const [maintenance, history, reference] = await Promise.all([
+  const [maintenance, history, reference, maintenanceSummary, valuation] = await Promise.all([
     getAssetMaintenanceHistory(user.organizationId, id),
     getAssetAuditHistory(user.organizationId, id),
     canEdit || canDelete ? getAssetFormReferenceData(user.organizationId) : Promise.resolve({ properties: [], buildings: [], vendors: [] }),
+    getAssetMaintenanceSummary(user.organizationId, id),
+    getAssetValuationContext(user.organizationId, asset.propertyId),
   ]);
+
+  const depreciation = calculateAssetDepreciation({
+    purchaseCost: asset.purchaseCost,
+    purchaseDate: asset.purchaseDate,
+    usefulLifeYears: asset.usefulLifeYears,
+    residualValue: asset.residualValue,
+    depreciationMethod: asset.depreciationMethod,
+    status: asset.status,
+  });
 
   const currency = (value: number | string | null) => formatCurrency(Number(value ?? 0), { locale });
   const day = (value: string | null) => (value ? formatDate(value, { locale, style: 'medium' }) : '—');
@@ -77,6 +91,9 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
       purchaseDate: asset.purchaseDate ?? undefined,
       purchaseCost: asset.purchaseCost != null ? String(asset.purchaseCost) : undefined,
       warrantyExpiryDate: asset.warrantyExpiryDate ?? undefined,
+      usefulLifeYears: asset.usefulLifeYears != null ? String(asset.usefulLifeYears) : undefined,
+      residualValue: asset.residualValue != null ? String(asset.residualValue) : undefined,
+      depreciationMethod: asset.depreciationMethod ?? undefined,
     },
   };
 
@@ -142,6 +159,76 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
           </CardBody>
         </Card>
       </div>
+
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+        <Card>
+          <CardHeader title="Maintenance Summary" />
+          <CardBody>
+            <DetailList>
+              <DetailRow label="Work Orders" value={String(maintenanceSummary.totalWorkOrders)} />
+              <DetailRow label="Open" value={String(maintenanceSummary.openWorkOrders)} />
+              <DetailRow label="Completed" value={String(maintenanceSummary.completedWorkOrders)} />
+              <DetailRow label="Total Maintenance Cost" value={currency(maintenanceSummary.totalMaintenanceCost)} />
+              <DetailRow label="Last Completed" value={maintenanceSummary.lastCompletedAt ? formatDate(maintenanceSummary.lastCompletedAt, { locale, style: 'medium' }) : '—'} />
+              <DetailRow label="Next Preventive Due" value={day(maintenanceSummary.nextPreventiveDueDate)} />
+            </DetailList>
+          </CardBody>
+        </Card>
+
+        <Card>
+          <CardHeader title="Financial Information" />
+          <CardBody>
+            <DetailList>
+              <DetailRow label="Purchase Cost" value={asset.purchaseCost != null ? currency(asset.purchaseCost) : '—'} />
+              <DetailRow label="Residual Value" value={asset.residualValue != null ? currency(asset.residualValue) : '—'} />
+              <DetailRow label="Lifetime Maintenance" value={currency(asset.lifetimeMaintenanceCost)} />
+              <DetailRow label="Maintenance (recorded costs)" value={currency(maintenanceSummary.totalMaintenanceCost)} />
+              {depreciation.depreciable ? (
+                <DetailRow label="Net Book Value" value={<span className="font-semibold">{currency(depreciation.netBookValue)}</span>} />
+              ) : null}
+            </DetailList>
+          </CardBody>
+        </Card>
+
+        <Card>
+          <CardHeader title="Depreciation Summary" description="Straight-line, calculated — not posted to any ledger." />
+          <CardBody>
+            {depreciation.depreciable ? (
+              <DetailList>
+                <DetailRow label="Method" value={humanizeAssetType(depreciation.method)} />
+                <DetailRow label="Useful Life" value={`${depreciation.usefulLifeYears} years`} />
+                <DetailRow label="Depreciable Base" value={currency(depreciation.depreciableBase)} />
+                <DetailRow label="Annual" value={currency(depreciation.annualDepreciation)} />
+                <DetailRow label="Monthly" value={currency(depreciation.monthlyDepreciation)} />
+                <DetailRow label="Elapsed" value={`${depreciation.elapsedMonths} months`} />
+                <DetailRow label="Accumulated" value={currency(depreciation.accumulatedDepreciation)} />
+                <DetailRow label="Net Book Value" value={<span className="font-semibold">{currency(depreciation.netBookValue)}</span>} />
+                {depreciation.fullyDepreciated ? <DetailRow label="Status" value="Fully depreciated" /> : !depreciation.started ? <DetailRow label="Status" value="Not started (future purchase date)" /> : null}
+              </DetailList>
+            ) : (
+              <p className="text-[13px] text-[var(--color-text-secondary)]">
+                Depreciation is not available: {depreciation.reason} Add a purchase cost, purchase date and useful life to enable straight-line depreciation.
+              </p>
+            )}
+          </CardBody>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader title="Valuation Context" description="Valuations are recorded at the property level, not per asset." />
+        <CardBody>
+          {valuation ? (
+            <DetailList>
+              <DetailRow label="Property Market Value" value={currency(valuation.marketValue)} />
+              <DetailRow label="Property Book Value" value={valuation.bookValue != null ? currency(valuation.bookValue) : '—'} />
+              <DetailRow label="Valuation Date" value={day(valuation.valuationDate)} />
+              <DetailRow label="Method" value={valuation.method ? humanizeAssetType(valuation.method) : '—'} />
+            </DetailList>
+          ) : (
+            <p className="text-[13px] text-[var(--color-text-secondary)]">No current valuation recorded for this asset&apos;s property.</p>
+          )}
+        </CardBody>
+      </Card>
 
       <Card>
         <CardHeader title="Maintenance History" description="Work orders linked to this asset." />

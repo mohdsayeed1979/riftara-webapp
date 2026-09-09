@@ -5,7 +5,10 @@ import {
   auditLogs,
   buildings,
   maintenanceAssets,
+  maintenanceCosts,
+  preventiveMaintenanceSchedules,
   properties,
+  valuations,
   vendors,
   workOrders,
 } from '@/db/schema';
@@ -139,6 +142,9 @@ export interface AssetListItem {
   lifetimeMaintenanceCost: number;
   nextServiceDate: string | null;
   warrantyExpiryDate: string | null;
+  usefulLifeYears: number | null;
+  residualValue: number | null;
+  depreciationMethod: string | null;
 }
 
 export async function listAssets(
@@ -184,6 +190,9 @@ export async function listAssets(
         lifetimeMaintenanceCost: maintenanceAssets.lifetimeMaintenanceCost,
         nextServiceDate: maintenanceAssets.nextServiceDate,
         warrantyExpiryDate: maintenanceAssets.warrantyExpiryDate,
+        usefulLifeYears: maintenanceAssets.usefulLifeYears,
+        residualValue: maintenanceAssets.residualValue,
+        depreciationMethod: maintenanceAssets.depreciationMethod,
       })
       .from(maintenanceAssets)
       .innerJoin(properties, eq(properties.id, maintenanceAssets.propertyId))
@@ -266,6 +275,9 @@ export async function getAsset(scope: AssetScope, assetId: string) {
       lifetimeMaintenanceCost: maintenanceAssets.lifetimeMaintenanceCost,
       lastServiceDate: maintenanceAssets.lastServiceDate,
       nextServiceDate: maintenanceAssets.nextServiceDate,
+      usefulLifeYears: maintenanceAssets.usefulLifeYears,
+      residualValue: maintenanceAssets.residualValue,
+      depreciationMethod: maintenanceAssets.depreciationMethod,
       createdAt: maintenanceAssets.createdAt,
       updatedAt: maintenanceAssets.updatedAt,
     })
@@ -315,6 +327,168 @@ export async function getAssetAuditHistory(organizationId: string, assetId: stri
     .limit(30);
 }
 
+export interface AssetMaintenanceSummary {
+  totalWorkOrders: number;
+  openWorkOrders: number;
+  completedWorkOrders: number;
+  lastCompletedAt: string | null;
+  totalMaintenanceCost: number;
+  costEntries: number;
+  activeSchedules: number;
+  nextPreventiveDueDate: string | null;
+}
+
+/**
+ * Aggregated maintenance rollup for an asset, from the EXISTING maintenance
+ * relationships (`work_orders.asset_id`, `maintenance_costs.asset_id`,
+ * `preventive_maintenance_schedules.asset_id`). Targeted aggregate queries —
+ * no per-row work-order fetch, so it is safe to compute on the detail page.
+ * Does not modify any maintenance record (read-only; BR-014/BR-017 untouched).
+ */
+export async function getAssetMaintenanceSummary(organizationId: string, assetId: string): Promise<AssetMaintenanceSummary> {
+  const db = await getDb();
+  const [[wo], [cost], [pm]] = await Promise.all([
+    db
+      .select({
+        totalWorkOrders: sql<number>`count(*)::int`,
+        openWorkOrders: sql<number>`count(*) filter (where ${workOrders.status} in ('open','assigned','in_progress','pending'))::int`,
+        completedWorkOrders: sql<number>`count(*) filter (where ${workOrders.status} = 'completed')::int`,
+        lastCompletedAt: sql<string | null>`max(${workOrders.completedAt})`,
+      })
+      .from(workOrders)
+      .where(and(eq(workOrders.organizationId, organizationId), eq(workOrders.assetId, assetId), isNull(workOrders.deletedAt))),
+    db
+      .select({
+        totalMaintenanceCost: sql<number>`coalesce(sum(${maintenanceCosts.amount}), 0)::float8`,
+        costEntries: sql<number>`count(*)::int`,
+      })
+      .from(maintenanceCosts)
+      .where(and(eq(maintenanceCosts.organizationId, organizationId), eq(maintenanceCosts.assetId, assetId))),
+    db
+      .select({
+        activeSchedules: sql<number>`count(*) filter (where ${preventiveMaintenanceSchedules.isActive} = true)::int`,
+        nextDueDate: sql<string | null>`min(${preventiveMaintenanceSchedules.nextDueDate}) filter (where ${preventiveMaintenanceSchedules.isActive} = true)`,
+      })
+      .from(preventiveMaintenanceSchedules)
+      .where(and(eq(preventiveMaintenanceSchedules.organizationId, organizationId), eq(preventiveMaintenanceSchedules.assetId, assetId))),
+  ]);
+
+  return {
+    totalWorkOrders: Number(wo?.totalWorkOrders ?? 0),
+    openWorkOrders: Number(wo?.openWorkOrders ?? 0),
+    completedWorkOrders: Number(wo?.completedWorkOrders ?? 0),
+    lastCompletedAt: wo?.lastCompletedAt ?? null,
+    totalMaintenanceCost: Number(cost?.totalMaintenanceCost ?? 0),
+    costEntries: Number(cost?.costEntries ?? 0),
+    activeSchedules: Number(pm?.activeSchedules ?? 0),
+    nextPreventiveDueDate: pm?.nextDueDate ?? null,
+  };
+}
+
+/**
+ * Property-level valuation context for an asset. Valuations are PROPERTY-SCOPED
+ * in the current schema (no `valuations.asset_id`); this returns the asset's
+ * property's current valuation as context only. There is no asset-level
+ * valuation and none is fabricated.
+ */
+export async function getAssetValuationContext(organizationId: string, propertyId: string) {
+  const db = await getDb();
+  const [row] = await db
+    .select({
+      marketValue: valuations.marketValue,
+      bookValue: valuations.bookValue,
+      valuationDate: valuations.valuationDate,
+      method: valuations.valuationMethod,
+    })
+    .from(valuations)
+    .where(and(eq(valuations.organizationId, organizationId), eq(valuations.propertyId, propertyId), eq(valuations.isCurrent, true)))
+    .orderBy(desc(valuations.valuationDate))
+    .limit(1);
+  return row ?? null;
+}
+
+const MS_PER_YEAR = 365.25 * 24 * 60 * 60 * 1000;
+
+export interface DepreciationInput {
+  purchaseCost: number | null;
+  purchaseDate: string | null;
+  usefulLifeYears: number | null;
+  residualValue: number | null;
+  depreciationMethod?: string | null;
+  status?: string;
+}
+
+export type AssetDepreciation =
+  | { depreciable: false; reason: string }
+  | {
+      depreciable: true;
+      method: string;
+      purchaseCost: number;
+      residualValue: number;
+      usefulLifeYears: number;
+      depreciableBase: number;
+      annualDepreciation: number;
+      monthlyDepreciation: number;
+      elapsedMonths: number;
+      accumulatedDepreciation: number;
+      netBookValue: number;
+      started: boolean;
+      fullyDepreciated: boolean;
+    };
+
+/**
+ * Straight-line depreciation as a CALCULATED read-model — never posted to the
+ * ledger and never persisted (there is no accounting integration). Returns
+ * `{ depreciable: false }` with a reason whenever the existing inputs are
+ * insufficient, so the UI can hide the section rather than show fake values.
+ *
+ *   Annual        = (cost - residual) / usefulLifeYears
+ *   Monthly       = annual / 12
+ *   Accumulated   = base * min(elapsedYears, life) / life   (0 before purchase)
+ *   Net book value= cost - accumulated
+ *
+ * Handles zero/negative cost, missing date, zero/negative useful life (no
+ * division by zero), residual >= cost, future purchase date, partial years,
+ * and full depreciation. Dates are treated as UTC to preserve the instant.
+ */
+export function calculateAssetDepreciation(input: DepreciationInput, asOf: Date = new Date()): AssetDepreciation {
+  const cost = input.purchaseCost;
+  if (cost == null || cost <= 0) return { depreciable: false, reason: 'No purchase cost recorded.' };
+  if (!input.purchaseDate) return { depreciable: false, reason: 'No purchase date recorded.' };
+  const life = input.usefulLifeYears;
+  if (life == null || life <= 0) return { depreciable: false, reason: 'No useful life set.' };
+
+  const purchase = new Date(`${input.purchaseDate}T00:00:00.000Z`);
+  if (Number.isNaN(purchase.getTime())) return { depreciable: false, reason: 'Invalid purchase date.' };
+
+  const residual = Math.min(Math.max(input.residualValue ?? 0, 0), cost);
+  const depreciableBase = round2(cost - residual);
+  const annualDepreciation = round2(depreciableBase / life);
+  const monthlyDepreciation = round2(depreciableBase / (life * 12));
+
+  const elapsedYears = Math.max(0, (asOf.getTime() - purchase.getTime()) / MS_PER_YEAR);
+  const cappedYears = Math.min(elapsedYears, life);
+  const fullyDepreciated = elapsedYears >= life;
+  const accumulatedDepreciation = fullyDepreciated ? depreciableBase : round2(depreciableBase * (cappedYears / life));
+  const netBookValue = round2(cost - accumulatedDepreciation);
+
+  return {
+    depreciable: true,
+    method: input.depreciationMethod ?? 'straight_line',
+    purchaseCost: cost,
+    residualValue: residual,
+    usefulLifeYears: life,
+    depreciableBase,
+    annualDepreciation,
+    monthlyDepreciation,
+    elapsedMonths: Math.round(cappedYears * 12),
+    accumulatedDepreciation,
+    netBookValue,
+    started: elapsedYears > 0,
+    fullyDepreciated,
+  };
+}
+
 /** Reference data for the create/edit/assign/transfer forms. */
 export async function getAssetFormReferenceData(organizationId: string) {
   const db = await getDb();
@@ -345,6 +519,9 @@ export interface CreateAssetInput {
   purchaseDate?: string;
   purchaseCost?: number;
   warrantyExpiryDate?: string;
+  usefulLifeYears?: number;
+  residualValue?: number;
+  depreciationMethod?: string;
 }
 
 export async function createAsset(actor: SessionUser, input: CreateAssetInput): Promise<{ id: string; code: string }> {
@@ -394,6 +571,9 @@ export async function createAsset(actor: SessionUser, input: CreateAssetInput): 
         purchaseDate: input.purchaseDate ?? null,
         purchaseCost: input.purchaseCost !== undefined ? round2(input.purchaseCost) : null,
         warrantyExpiryDate: input.warrantyExpiryDate ?? null,
+        usefulLifeYears: input.usefulLifeYears ?? null,
+        residualValue: input.residualValue !== undefined ? round2(input.residualValue) : null,
+        depreciationMethod: input.depreciationMethod ?? 'straight_line',
         status: 'operational',
       })
       .returning({ id: maintenanceAssets.id });
@@ -441,6 +621,9 @@ export interface UpdateAssetInput {
   purchaseDate?: string | null;
   purchaseCost?: number | null;
   warrantyExpiryDate?: string | null;
+  usefulLifeYears?: number | null;
+  residualValue?: number | null;
+  depreciationMethod?: string;
 }
 
 export async function updateAsset(actor: SessionUser, assetId: string, input: UpdateAssetInput): Promise<{ id: string }> {
@@ -464,6 +647,9 @@ export async function updateAsset(actor: SessionUser, assetId: string, input: Up
     if (input.purchaseDate !== undefined) patch.purchaseDate = input.purchaseDate;
     if (input.purchaseCost !== undefined) patch.purchaseCost = input.purchaseCost === null ? null : round2(input.purchaseCost);
     if (input.warrantyExpiryDate !== undefined) patch.warrantyExpiryDate = input.warrantyExpiryDate;
+    if (input.usefulLifeYears !== undefined) patch.usefulLifeYears = input.usefulLifeYears;
+    if (input.residualValue !== undefined) patch.residualValue = input.residualValue === null ? null : round2(input.residualValue);
+    if (input.depreciationMethod !== undefined) patch.depreciationMethod = input.depreciationMethod;
 
     await tx.update(maintenanceAssets).set(patch).where(eq(maintenanceAssets.id, assetId));
     await recordAudit(tx, {

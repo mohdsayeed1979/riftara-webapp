@@ -59,6 +59,12 @@ export const maintenanceAssets = pgTable(
     lifetimeMaintenanceCost: money('lifetime_maintenance_cost').notNull().default(0),
     lastServiceDate: date('last_service_date'),
     nextServiceDate: date('next_service_date'),
+    // Straight-line depreciation inputs (Phase 10B). Nullable: depreciation is
+    // computed on-read only when useful_life_years is present. residual_value
+    // defaults to 0 (no salvage) when unset.
+    usefulLifeYears: integer('useful_life_years'),
+    residualValue: money('residual_value'),
+    depreciationMethod: varchar('depreciation_method', { length: 24 }).default('straight_line'),
     isDemo: isDemo(),
     ...timestamps,
   },
