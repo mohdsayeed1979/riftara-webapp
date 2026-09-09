@@ -6,11 +6,12 @@ import { Card, CardBody, CardHeader } from '@/components/ui/card';
 import { DetailList, DetailRow, MetaItem, PageHeader } from '@/components/ui/page';
 import { UserFormDialog } from '@/features/admin/user-form-dialog';
 import { ManageRolesButton, ResetPasswordButton, StatusToggleButton } from '@/features/admin/user-management-actions';
+import { ScopeAssignmentDialog } from '@/features/admin/scope-assignment-dialog';
 import { can, requirePermission } from '@/lib/auth/guard';
 import { isUuid } from '@/lib/utils';
 import { formatDateTime, formatRelativeTime } from '@/lib/format';
 import { getRequestLocale } from '@/lib/locale';
-import { getAssignableRoles, getUserDetail, getUserRoleIds } from '@/services/user-admin-service';
+import { getAssignableRoles, getAssignableScopes, getUserDetail, getUserRoleIds, getUserScopeIds } from '@/services/user-admin-service';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'User' };
@@ -27,9 +28,11 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
 
   const canEdit = can(actor, 'users:edit');
   const canManage = can(actor, 'users:manage');
-  const [assignableRoles, currentRoleIds] = await Promise.all([
+  const [assignableRoles, currentRoleIds, assignableScopes, currentScopes] = await Promise.all([
     canManage ? getAssignableRoles(actor) : Promise.resolve([]),
     canManage ? getUserRoleIds(actor.organizationId, id) : Promise.resolve([]),
+    canManage ? getAssignableScopes(actor) : Promise.resolve({ properties: [], cities: [] }),
+    canManage ? getUserScopeIds(actor.organizationId, id) : Promise.resolve({ propertyIds: [], cityIds: [] }),
   ]);
   const locked = user.lockedUntil && user.lockedUntil > new Date();
 
@@ -50,6 +53,7 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
           <>
             {canEdit ? <UserFormDialog mode="edit" userId={id} triggerVariant="secondary" initial={{ fullName: user.fullName, fullNameAr: user.fullNameAr ?? undefined, email: user.email, jobTitle: user.jobTitle ?? undefined, phone: user.phone ?? undefined, locale: user.locale }} /> : null}
             {canManage ? <ManageRolesButton userId={id} roles={assignableRoles} currentRoleIds={currentRoleIds} /> : null}
+            {canManage ? <ScopeAssignmentDialog userId={id} properties={assignableScopes.properties} cities={assignableScopes.cities} currentPropertyIds={currentScopes.propertyIds} currentCityIds={currentScopes.cityIds} /> : null}
             {canManage ? <ResetPasswordButton userId={id} /> : null}
             {canEdit ? <StatusToggleButton userId={id} isActive={user.isActive} isSelf={id === actor.id} /> : null}
           </>

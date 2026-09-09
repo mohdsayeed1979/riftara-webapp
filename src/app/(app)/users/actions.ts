@@ -10,6 +10,7 @@ import {
   createUser,
   setUserActive,
   setUserRoles,
+  setUserScopes,
   updateUser,
 } from '@/services/user-admin-service';
 
@@ -117,6 +118,21 @@ export async function setUserRolesAction(userId: string, roleIds: string[]): Pro
     const validIds = roleIds.filter((id) => isUuid(id));
     const result = await setUserRoles(actor, userId, validIds);
     try { revalidatePath('/users'); revalidatePath(`/users/${userId}`); } catch { /* cache hint */ }
+    return actionSuccess(result);
+  } catch (error) {
+    return actionFailure(error);
+  }
+}
+
+export async function setUserScopesAction(userId: string, propertyIds: string[], cityIds: string[]): Promise<ActionResult<{ id: string }>> {
+  try {
+    if (!isUuid(userId)) return { ok: false, error: { code: 'NOT_FOUND', message: 'User not found.' } };
+    const actor = await requirePermission('users:manage');
+    const result = await setUserScopes(actor, userId, {
+      propertyIds: propertyIds.filter((id) => isUuid(id)),
+      cityIds: cityIds.filter((id) => isUuid(id)),
+    });
+    try { revalidatePath(`/users/${userId}`); revalidatePath('/users'); } catch { /* cache hint */ }
     return actionSuccess(result);
   } catch (error) {
     return actionFailure(error);

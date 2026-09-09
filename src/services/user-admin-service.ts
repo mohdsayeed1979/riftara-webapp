@@ -1,7 +1,7 @@
 import 'server-only';
 import { and, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
-import { permissions, rolePermissions, roles, userRoles, users } from '@/db/schema';
+import { cities, permissions, properties, rolePermissions, roles, userRoles, userScopes, users } from '@/db/schema';
 import type { DbExecutor } from '@/db/types';
 import { recordAudit } from '@/lib/audit';
 import { conflict, forbidden, notFound, validationError } from '@/lib/errors';
@@ -406,3 +406,114 @@ export async function getUserDetail(organizationId: string, userId: string) {
 
 export type AssignableRole = Awaited<ReturnType<typeof getAssignableRoles>>[number];
 export type PermissionKeyList = PermissionKey[];
+
+/* -------------------------------------------------------------------------- */
+/* Data-scope assignment (BRD 126) — Phase 8B                                  */
+/* -------------------------------------------------------------------------- */
+
+/** Whether the actor is restricted by any data scope (empty = organization-wide). */
+function actorIsScopeRestricted(actor: SessionUser): boolean {
+  return actor.scopedPropertyIds.length > 0 || actor.scopedCityIds.length > 0;
+}
+
+/** Assignable property/city scopes for the actor: an organization-wide actor
+ *  (no scope rows) may assign any in-org scope; a scoped actor may only assign
+ *  scopes within their own effective scope (no scope escalation). */
+export async function getAssignableScopes(actor: SessionUser): Promise<{ properties: Array<{ id: string; name: string }>; cities: Array<{ id: string; name: string }> }> {
+  const db = await getDb();
+  const restricted = actorIsScopeRestricted(actor);
+
+  const propRows = await db
+    .select({ id: properties.id, name: properties.nameEn })
+    .from(properties)
+    .where(and(eq(properties.organizationId, actor.organizationId), isNull(properties.deletedAt)))
+    .orderBy(properties.nameEn);
+  const cityRows = await db
+    .select({ id: cities.id, name: cities.nameEn })
+    .from(cities)
+    .where(eq(cities.organizationId, actor.organizationId))
+    .orderBy(cities.nameEn);
+
+  if (!restricted || actor.roleKeys.includes(SUPER_ADMIN_KEY)) return { properties: propRows, cities: cityRows };
+
+  const propSet = new Set(actor.scopedPropertyIds);
+  const citySet = new Set(actor.scopedCityIds);
+  return {
+    // A scoped actor can only delegate scopes of a type they themselves hold.
+    properties: actor.scopedPropertyIds.length > 0 ? propRows.filter((p) => propSet.has(p.id)) : [],
+    cities: actor.scopedCityIds.length > 0 ? cityRows.filter((c) => citySet.has(c.id)) : [],
+  };
+}
+
+/** Atomically replaces a user's data scopes. Validates every id in-org and,
+ *  for a non-Super-Admin, refuses any scope broader than the actor's own. */
+export async function setUserScopes(
+  actor: SessionUser,
+  userId: string,
+  input: { propertyIds: string[]; cityIds: string[] },
+): Promise<{ id: string }> {
+  const propertyIds = Array.from(new Set(input.propertyIds));
+  const cityIds = Array.from(new Set(input.cityIds));
+  const superAdmin = actor.roleKeys.includes(SUPER_ADMIN_KEY);
+  const restricted = actorIsScopeRestricted(actor);
+
+  const db = await getDb();
+  return db.transaction(async (tx) => {
+    const target = await requireOrgUser(tx, actor.organizationId, userId);
+
+    // In-organization validation.
+    if (propertyIds.length > 0) {
+      const rows = await tx.select({ id: properties.id }).from(properties).where(and(inArray(properties.id, propertyIds), eq(properties.organizationId, actor.organizationId), isNull(properties.deletedAt)));
+      if (rows.length !== propertyIds.length) throw validationError('One or more properties are not valid for this organization.');
+    }
+    if (cityIds.length > 0) {
+      const rows = await tx.select({ id: cities.id }).from(cities).where(and(inArray(cities.id, cityIds), eq(cities.organizationId, actor.organizationId)));
+      if (rows.length !== cityIds.length) throw validationError('One or more cities are not valid for this organization.');
+    }
+
+    // Escalation guard: a scoped actor cannot grant beyond their own scope.
+    if (!superAdmin && restricted) {
+      const propSet = new Set(actor.scopedPropertyIds);
+      const citySet = new Set(actor.scopedCityIds);
+      if (propertyIds.length > 0 && (actor.scopedPropertyIds.length === 0 || !propertyIds.every((id) => propSet.has(id)))) {
+        throw forbidden('You cannot grant a property scope broader than your own.');
+      }
+      if (cityIds.length > 0 && (actor.scopedCityIds.length === 0 || !cityIds.every((id) => citySet.has(id)))) {
+        throw forbidden('You cannot grant a city scope broader than your own.');
+      }
+    }
+
+    const previous = await tx.select({ scopeType: userScopes.scopeType, scopeId: userScopes.scopeId }).from(userScopes).where(eq(userScopes.userId, userId));
+
+    await tx.delete(userScopes).where(eq(userScopes.userId, userId));
+    const rowsToInsert = [
+      ...propertyIds.map((scopeId) => ({ userId, scopeType: 'property', scopeId })),
+      ...cityIds.map((scopeId) => ({ userId, scopeType: 'city', scopeId })),
+    ];
+    if (rowsToInsert.length > 0) await tx.insert(userScopes).values(rowsToInsert);
+
+    await recordAudit(tx, {
+      organizationId: actor.organizationId,
+      action: 'update',
+      entityType: 'user',
+      entityId: userId,
+      entityLabel: target.email,
+      previousValue: { scopes: previous },
+      newValue: { properties: propertyIds, cities: cityIds },
+      reason: 'user_scopes_changed',
+      actor: { id: actor.id, fullName: actor.fullName },
+    });
+    return { id: userId };
+  });
+}
+
+export async function getUserScopeIds(organizationId: string, userId: string): Promise<{ propertyIds: string[]; cityIds: string[] }> {
+  const db = await getDb();
+  const [target] = await db.select({ id: users.id }).from(users).where(and(eq(users.id, userId), eq(users.organizationId, organizationId))).limit(1);
+  if (!target) return { propertyIds: [], cityIds: [] };
+  const rows = await db.select({ scopeType: userScopes.scopeType, scopeId: userScopes.scopeId }).from(userScopes).where(eq(userScopes.userId, userId));
+  return {
+    propertyIds: rows.filter((r) => r.scopeType === 'property').map((r) => r.scopeId),
+    cityIds: rows.filter((r) => r.scopeType === 'city').map((r) => r.scopeId),
+  };
+}

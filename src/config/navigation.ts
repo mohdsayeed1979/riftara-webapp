@@ -206,6 +206,13 @@ export const NAV_GROUPS: NavGroup[] = [
         matches: ['/users', '/roles', '/permissions'],
       },
       {
+        key: 'audit',
+        href: '/audit',
+        labelKey: 'nav.audit',
+        icon: ShieldCheck,
+        permission: 'audit:view',
+      },
+      {
         key: 'settings',
         href: '/settings',
         labelKey: 'nav.settings',
