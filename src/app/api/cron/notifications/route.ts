@@ -4,6 +4,9 @@ import { apiError, apiSuccess } from '@/lib/api/response';
 import { AppError } from '@/lib/errors';
 import { generateAllNotificationsForAllOrganizations } from '@/services/notification-service';
 
+// This route uses node:crypto and the postgres driver, so it must run on the
+// Node.js serverless runtime (never the Edge runtime).
+export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**

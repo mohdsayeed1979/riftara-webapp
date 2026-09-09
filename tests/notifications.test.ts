@@ -142,6 +142,20 @@ describe('Aggregate runner, RBAC & cron', () => {
     if (!denied.ok) expect(denied.error.code).toBe('FORBIDDEN');
   });
 
+  it('exposes the cron route as a GET handler and wires it in vercel.json', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    // The route module must export a GET handler (Vercel Cron sends GET).
+    const routeModule = await import('@/app/api/cron/notifications/route');
+    expect(typeof routeModule.GET).toBe('function');
+    expect(routeModule.runtime).toBe('nodejs');
+    // vercel.json must register the cron at the exact route path with a valid schedule.
+    const vercel = JSON.parse(await readFile(join(process.cwd(), 'vercel.json'), 'utf8'));
+    const cron = (vercel.crons ?? []).find((c: { path: string }) => c.path === '/api/cron/notifications');
+    expect(cron).toBeTruthy();
+    expect(cron.schedule).toMatch(/^(\S+\s+){4}\S+$/); // 5-field cron expression
+  });
+
   it('the cron endpoint rejects missing/invalid credentials and accepts the secret', async () => {
     const { GET } = await import('@/app/api/cron/notifications/route');
     process.env.CRON_SECRET = 'cron-test-secret';

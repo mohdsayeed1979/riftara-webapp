@@ -17,7 +17,7 @@ export const dynamic = 'force-dynamic';
  * holding `settings:manage`. There is no public/unauthenticated path.
  *
  * Deployment: RIFTARA runs on Vercel (no always-on process). A Vercel Cron job
- * POSTs this endpoint hourly with an API key that holds `settings:manage`
+ * POSTs this endpoint on a schedule with an API key that holds `settings:manage`
  * (see `vercel.json`). The API key value is configured in the deployment
  * environment and is never committed to source control.
  */
