@@ -5,6 +5,7 @@ import {
   cities,
   contracts,
   districts,
+  expenseCategories,
   invoices,
   maintenanceCosts,
   operatingExpenses,
@@ -245,15 +246,19 @@ export async function getPortfolioSummary(scope: MetricScope): Promise<Portfolio
     .where(and(inArray(invoices.propertyId, propertyIds), eq(invoices.status, 'overdue')));
 
   // --- OPEX and maintenance ------------------------------------------------
+  // Only expense categories flagged includedInOpex feed OPEX/NOI, so CAPEX and
+  // other non-operating categories never inflate NOI (BR-016).
   const [opexRow] = await db
     .select({ total: sql<number>`coalesce(sum(${operatingExpenses.amount}), 0)::float8` })
     .from(operatingExpenses)
+    .innerJoin(expenseCategories, eq(expenseCategories.id, operatingExpenses.categoryId))
     .where(
       and(
         inArray(operatingExpenses.propertyId, propertyIds),
         gte(operatingExpenses.incurredOn, iso(start)),
         lte(operatingExpenses.incurredOn, iso(end)),
         isNull(operatingExpenses.deletedAt),
+        eq(expenseCategories.includedInOpex, true),
       ),
     );
 
@@ -491,11 +496,13 @@ export async function getPropertyPerformance(scope: MetricScope): Promise<Proper
       total: sql<number>`coalesce(sum(${operatingExpenses.amount}), 0)::float8`,
     })
     .from(operatingExpenses)
+    .innerJoin(expenseCategories, eq(expenseCategories.id, operatingExpenses.categoryId))
     .where(
       and(
         inArray(operatingExpenses.propertyId, propertyIds),
         gte(operatingExpenses.incurredOn, iso(start)),
         lte(operatingExpenses.incurredOn, iso(end)),
+        eq(expenseCategories.includedInOpex, true),
       ),
     )
     .groupBy(operatingExpenses.propertyId);

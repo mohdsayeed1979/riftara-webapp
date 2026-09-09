@@ -7,9 +7,11 @@ import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/misc';
 import { PageHeader } from '@/components/ui/page';
 import { Table, TableContainer, TBody, TD, TH, THead, TR } from '@/components/ui/table';
-import { requirePermission } from '@/lib/auth/guard';
+import { can, requirePermission } from '@/lib/auth/guard';
 import { formatCompactCurrency, formatDate } from '@/lib/format';
 import { getRequestLocale } from '@/lib/locale';
+import { getFinancialFormReferenceData } from '@/services/financial-service';
+import { RecordValuationButton } from '@/features/financials/valuation-dialog';
 
 export const metadata: Metadata = { title: 'Valuations' };
 export const dynamic = 'force-dynamic';
@@ -18,6 +20,7 @@ export default async function ValuationsPage() {
   const user = await requirePermission('financials:view');
   const locale = await getRequestLocale();
   const db = await getDb();
+  const reference = can(user, 'financials:create') ? await getFinancialFormReferenceData(user.organizationId) : null;
 
   const rows = await db
     .select({
@@ -48,6 +51,7 @@ export default async function ValuationsPage() {
         title="Asset Valuations"
         subtitle="Current approved valuations driving portfolio market value."
         meta={<span>Total market value: <span className="font-semibold text-[var(--color-text-primary)]">{money(totalMarket)}</span></span>}
+        actions={reference ? <RecordValuationButton properties={reference.properties} /> : undefined}
       />
 
       <Card>

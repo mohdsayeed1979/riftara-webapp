@@ -1,16 +1,18 @@
 import type { Metadata } from 'next';
 import { and, eq, gte, lte, sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
-import { budgetLines, budgets, invoices, maintenanceCosts, operatingExpenses } from '@/db/schema';
+import { budgetLines, budgets, expenseCategories, invoices, maintenanceCosts, operatingExpenses } from '@/db/schema';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/misc';
 import { PageHeader } from '@/components/ui/page';
 import { Table, TableContainer, TBody, TD, TH, THead, TR } from '@/components/ui/table';
-import { requirePermission } from '@/lib/auth/guard';
+import { can, requirePermission } from '@/lib/auth/guard';
 import { budgetVariance } from '@/lib/calculations/metrics';
 import { formatCompactCurrency } from '@/lib/format';
 import { getRequestLocale } from '@/lib/locale';
 import { cn } from '@/lib/utils';
+import { getFinancialFormReferenceData, listBudgets } from '@/services/financial-service';
+import { AddBudgetLineButton, CreateBudgetButton } from '@/features/financials/budget-dialogs';
 
 export const metadata: Metadata = { title: 'Budget vs Actual' };
 export const dynamic = 'force-dynamic';
@@ -44,7 +46,8 @@ export default async function BudgetsPage() {
   const [opexRow] = await db
     .select({ total: sql<number>`coalesce(sum(${operatingExpenses.amount}), 0)::float8` })
     .from(operatingExpenses)
-    .where(and(eq(operatingExpenses.organizationId, user.organizationId), gte(operatingExpenses.incurredOn, yearStart), lte(operatingExpenses.incurredOn, yearEnd)));
+    .innerJoin(expenseCategories, eq(expenseCategories.id, operatingExpenses.categoryId))
+    .where(and(eq(operatingExpenses.organizationId, user.organizationId), gte(operatingExpenses.incurredOn, yearStart), lte(operatingExpenses.incurredOn, yearEnd), eq(expenseCategories.includedInOpex, true)));
 
   const [maintenanceRow] = await db
     .select({ total: sql<number>`coalesce(sum(${maintenanceCosts.amount}), 0)::float8` })
@@ -68,12 +71,25 @@ export default async function BudgetsPage() {
   const money = (value: number) => formatCompactCurrency(value, { locale });
   const hasBudget = budgetRows.length > 0;
 
+  const canCreate = can(user, 'financials:create');
+  const canEdit = can(user, 'financials:edit');
+  const [reference, budgetList] = await Promise.all([
+    canCreate ? getFinancialFormReferenceData(user.organizationId) : Promise.resolve(null),
+    canEdit ? listBudgets(user.organizationId) : Promise.resolve([]),
+  ]);
+
   return (
     <div className="flex flex-col gap-5">
       <PageHeader
         breadcrumbs={[{ label: 'Financials', href: '/financials' }, { label: 'Budget vs Actual' }]}
         title="Budget vs Actual"
         subtitle={`Fiscal year ${year} — actuals against the approved operating budget.`}
+        actions={
+          <>
+            {canEdit && budgetList.length > 0 ? <AddBudgetLineButton budgets={budgetList.map((b) => ({ id: b.id, name: `${b.name} (FY${b.fiscalYear})` }))} /> : null}
+            {reference ? <CreateBudgetButton properties={reference.properties} fiscalYear={year} /> : null}
+          </>
+        }
       />
       <Card>
         {!hasBudget ? (
