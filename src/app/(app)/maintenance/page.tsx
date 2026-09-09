@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { Banknote, CheckCircle2, ClipboardList, Clock, Star, Timer, Wrench } from 'lucide-react';
+import { Banknote, CheckCircle2, ClipboardList, Clock, Plus, Star, Timer, Wrench } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
 import { FilterBar } from '@/components/app/filter-bar';
 import { KpiCard } from '@/components/ui/kpi-card';
@@ -9,7 +10,8 @@ import { KpiGrid, PageHeader } from '@/components/ui/page';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Pagination, Table, TableContainer, TBody, TD, TH, THead, TR } from '@/components/ui/table';
 import { ColumnChart, DonutChart, DonutLegend } from '@/components/charts/primitives';
-import { requirePermission } from '@/lib/auth/guard';
+import { GeneratePmWorkOrderButton, RunSlaScanButton } from '@/features/maintenance/maintenance-buttons';
+import { can, requirePermission } from '@/lib/auth/guard';
 import { formatCompactCurrency, formatDate, formatPercent } from '@/lib/format';
 import { getRequestLocale, getRequestLocationId } from '@/lib/locale';
 import {
@@ -96,6 +98,16 @@ export default async function MaintenancePage({
       <PageHeader
         title="Maintenance Operations"
         subtitle="Manage work orders, track SLA performance and oversee preventive maintenance."
+        actions={
+          <>
+            {can(user, 'maintenance:edit') ? <RunSlaScanButton /> : null}
+            {can(user, 'maintenance:create') ? (
+              <Button asChild>
+                <Link href="/maintenance/new"><Plus />Create Work Order</Link>
+              </Button>
+            ) : null}
+          </>
+        }
       />
 
       <KpiGrid columns={6}>
@@ -174,7 +186,7 @@ export default async function MaintenancePage({
             <TableContainer>
               <Table>
                 <THead>
-                  <TR><TH>#</TH><TH>Property</TH><TH>Type</TH><TH alignment="end">Scheduled</TH><TH alignment="center">Status</TH></TR>
+                  <TR><TH>#</TH><TH>Property</TH><TH>Type</TH><TH alignment="end">Scheduled</TH><TH alignment="center">Status</TH>{can(user, 'maintenance:create') ? <TH alignment="end">Action</TH> : null}</TR>
                 </THead>
                 <TBody>
                   {preventive.map((schedule, index) => (
@@ -184,6 +196,7 @@ export default async function MaintenancePage({
                       <TD className="text-[var(--color-text-secondary)]">{schedule.categoryName ?? schedule.name}</TD>
                       <TD alignment="end" className="whitespace-nowrap">{formatDate(schedule.nextDueDate, { locale, style: 'short' })}</TD>
                       <TD alignment="center"><StatusBadge status={schedule.status === 'scheduled' ? 'scheduled' : schedule.status === 'overdue' ? 'overdue' : 'due'} dot={false} /></TD>
+                      {can(user, 'maintenance:create') ? <TD alignment="end"><GeneratePmWorkOrderButton scheduleId={schedule.id} /></TD> : null}
                     </TR>
                   ))}
                 </TBody>
