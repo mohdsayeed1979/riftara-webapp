@@ -42,6 +42,7 @@ export const ar: Messages = {
     loading: 'جارٍ التحميل',
     noResults: 'لا توجد نتائج',
     noResultsHint: 'جرّب تعديل عوامل التصفية أو كلمات البحث.',
+    viewAllResults: 'عرض كل النتائج',
     error: 'حدث خطأ ما',
     errorHint: 'تعذّر إتمام العملية. يرجى المحاولة مرة أخرى.',
     retry: 'إعادة المحاولة',

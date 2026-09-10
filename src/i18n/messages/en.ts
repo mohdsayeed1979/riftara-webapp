@@ -41,6 +41,7 @@ export const en = {
     loading: 'Loading',
     noResults: 'No results found',
     noResultsHint: 'Try adjusting your filters or search terms.',
+    viewAllResults: 'View all results',
     error: 'Something went wrong',
     errorHint: 'The action could not be completed. Please try again.',
     retry: 'Try again',

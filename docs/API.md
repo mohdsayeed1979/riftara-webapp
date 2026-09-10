@@ -41,7 +41,9 @@ is swappable for Redis behind a load balancer.
 
 | Method | Path | Permission | Description |
 | --- | --- | --- | --- |
-| GET | `/api/v1/search?q=` | any authenticated | Grouped global search (BRD §131) |
+| GET | `/api/v1/search?q=` | any authenticated | Global search (BRD §131). Default: grouped results. `&format=flat[&type=&page=&limit=]` returns normalized, ranked, paginated results |
+| GET | `/api/v1/documents/:id/download` | `documents:view` (+ per-doc) | Authenticated streaming document download |
+| POST | `/api/v1/documents` | `documents:create` | Multipart document upload (versioning needs `documents:manage`) |
 | POST | `/api/v1/units/:id/publish` | `units:publish` | Publish a unit to the website (BR-001) |
 | POST | `/api/v1/units/:id/unpublish` | `units:publish` | Withdraw a unit |
 | GET | `/api/v1/units/export?format=xlsx\|csv` | `units:export` | Unit inventory export |
@@ -55,6 +57,20 @@ is swappable for Redis behind a load balancer.
 | POST | `/api/v1/notifications/read-all` | any authenticated | Mark notifications read |
 | POST | `/api/v1/notifications/:id/read` | any authenticated | Mark one notification read |
 | POST | `/api/auth/logout` | any authenticated | End the session |
+
+### Global search & discovery (BRD §131)
+
+Covers properties, buildings, units, customers, tenants, leads, contracts,
+invoices, payments, work orders, assets, ownership/CR references and documents.
+Every result is authorized **server-side**: organization isolation, per-entity
+RBAC (`<module>:view`), and property data-scope. Documents additionally enforce
+`requiredPermission`, confidentiality and parent-entity scope, and never expose
+`storageKey`/paths. Ranking is deterministic (exact code/title → prefix →
+contains → secondary fields). Queries under 2 or over 120 characters are
+rejected/ignored; results are bounded per group with pagination in `flat` mode.
+The `/search` page consumes `format=flat`; the header search bar uses the
+grouped default. The result shape is normalized and ready for a future
+AI/vector ranker without an API change.
 
 ### Planned resource routes (BRD §110)
 

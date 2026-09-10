@@ -204,6 +204,16 @@ export function GlobalSearch({ className }: { className?: string }) {
               </div>
             ))
           )}
+          {query.trim().length >= 2 ? (
+            <button
+              type="button"
+              onClick={() => navigate(`/search?q=${encodeURIComponent(query.trim())}`)}
+              className="mt-1 flex w-full items-center gap-2 border-t border-[var(--color-border-subtle)] px-3 py-2 text-start text-[12px] font-medium text-[var(--color-secondary)] transition-colors hover:bg-[var(--color-surface-alt)]"
+            >
+              <Search className="size-3.5" aria-hidden />
+              {t('common.viewAllResults')}
+            </button>
+          ) : null}
         </div>
       ) : null}
     </div>
