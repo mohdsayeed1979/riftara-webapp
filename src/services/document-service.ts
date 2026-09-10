@@ -1,6 +1,6 @@
 import 'server-only';
 import { randomUUID } from 'node:crypto';
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import {
   buildings,
@@ -39,6 +39,48 @@ export interface DocumentActor {
 }
 
 const maxUploadBytes = () => env.STORAGE_MAX_UPLOAD_MB * 1024 * 1024;
+
+/**
+ * Restricts document rows to those whose parent entity is within the caller's
+ * property data-scope. Records without a property (customer/tenant) are
+ * organization-level and always allowed. Batched by entity type — no N+1.
+ * Shared by global search and the compliance center so document scoping is
+ * enforced identically everywhere.
+ */
+export async function filterDocumentsByPropertyScope<T extends { entityType: string; entityId: string }>(
+  organizationId: string,
+  allowedPropertyIds: string[] | null,
+  rows: T[],
+): Promise<T[]> {
+  if (!allowedPropertyIds || rows.length === 0) return rows;
+  const db = await getDb();
+  const allowed = new Set(allowedPropertyIds);
+  const idsOf = (type: string) => rows.filter((r) => r.entityType === type).map((r) => r.entityId);
+
+  const propertyByEntity = new Map<string, string | null>();
+  const record = (type: string, res: Array<{ id: string; propertyId: string | null }>) => {
+    for (const row of res) propertyByEntity.set(`${type}:${row.id}`, row.propertyId);
+  };
+  const unitIds = idsOf('unit');
+  const buildingIds = idsOf('building');
+  const contractIds = idsOf('contract');
+  const assetIds = idsOf('asset');
+
+  await Promise.all([
+    unitIds.length ? db.select({ id: units.id, propertyId: units.propertyId }).from(units).where(and(eq(units.organizationId, organizationId), inArray(units.id, unitIds))).then((r) => record('unit', r)) : Promise.resolve(),
+    buildingIds.length ? db.select({ id: buildings.id, propertyId: buildings.propertyId }).from(buildings).where(and(eq(buildings.organizationId, organizationId), inArray(buildings.id, buildingIds))).then((r) => record('building', r)) : Promise.resolve(),
+    contractIds.length ? db.select({ id: contracts.id, propertyId: contracts.propertyId }).from(contracts).where(and(eq(contracts.organizationId, organizationId), inArray(contracts.id, contractIds))).then((r) => record('contract', r)) : Promise.resolve(),
+    assetIds.length ? db.select({ id: maintenanceAssets.id, propertyId: maintenanceAssets.propertyId }).from(maintenanceAssets).where(and(eq(maintenanceAssets.organizationId, organizationId), inArray(maintenanceAssets.id, assetIds))).then((r) => record('asset', r)) : Promise.resolve(),
+  ]);
+
+  return rows.filter((r) => {
+    if (r.entityType === 'property') return allowed.has(r.entityId);
+    if (r.entityType === 'customer' || r.entityType === 'tenant') return true; // org-level
+    const propertyId = propertyByEntity.get(`${r.entityType}:${r.entityId}`);
+    if (propertyId === undefined) return false; // unresolved → exclude (safe default)
+    return propertyId !== null && allowed.has(propertyId);
+  });
+}
 
 /** Builds the document actor context from a session user. */
 export function documentActorFromUser(user: SessionUser): DocumentActor {

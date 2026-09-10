@@ -44,6 +44,7 @@ is swappable for Redis behind a load balancer.
 | GET | `/api/v1/search?q=` | any authenticated | Global search (BRD §131). Default: grouped results. `&format=flat[&type=&page=&limit=]` returns normalized, ranked, paginated results |
 | GET | `/api/v1/documents/:id/download` | `documents:view` (+ per-doc) | Authenticated streaming document download |
 | POST | `/api/v1/documents` | `documents:create` | Multipart document upload (versioning needs `documents:manage`) |
+| GET | `/api/v1/compliance?type=&filter=&window=&page=&limit=` | any of `documents:view` / `assets:view` / `contracts:view` | Expiring/expired documents, asset warranties & contracts (Phase 13) |
 | POST | `/api/v1/units/:id/publish` | `units:publish` | Publish a unit to the website (BR-001) |
 | POST | `/api/v1/units/:id/unpublish` | `units:publish` | Withdraw a unit |
 | GET | `/api/v1/units/export?format=xlsx\|csv` | `units:export` | Unit inventory export |
@@ -71,6 +72,18 @@ rejected/ignored; results are bounded per group with pagination in `flat` mode.
 The `/search` page consumes `format=flat`; the header search bar uses the
 grouped default. The result shape is normalized and ready for a future
 AI/vector ranker without an API change.
+
+### Compliance & expiry automation (Phase 13)
+
+The daily notification cron (`generateAllNotifications`) additionally generates
+`document_expiry` and `warranty_expiry` alerts (idempotent, recency-windowed).
+Document-expiry alerts are targeted by each document's own `requiredPermission`
+(or `documents:view`), so confidential documents only ever alert authorized
+users; warranty alerts target `assets:view`. The **Compliance Center**
+(`/compliance`, API `/api/v1/compliance`) aggregates approaching/expired
+documents, asset warranties and contracts — organization-scoped, RBAC-gated,
+property-data-scoped, with document confidentiality enforced and no `storageKey`/
+path exposure. Reuses existing fields only; **no migration**.
 
 ### Planned resource routes (BRD §110)
 

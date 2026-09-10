@@ -18,6 +18,7 @@ import {
   workOrders,
 } from '@/db/schema';
 import { normalizeMobile } from '@/lib/utils';
+import { filterDocumentsByPropertyScope } from '@/services/document-service';
 import type { PermissionKey } from '@/lib/permissions/catalog';
 
 /**
@@ -320,7 +321,7 @@ export async function globalSearch(
           .where(and(eq(documents.organizationId, orgId), isNull(documents.deletedAt), eq(documents.isCurrentVersion, true), permissionFilter, or(ilike(documents.title, like), ilike(documents.fileName, like))))
           .limit(fetchLimit);
         // Parent-entity data-scope: drop documents attached to records outside scope.
-        const scoped = await filterDocumentsByPropertyScope(db, orgId, propertyScope, rows);
+        const scoped = await filterDocumentsByPropertyScope(orgId, propertyScope, rows);
         add(
           'document',
           'Documents',
@@ -335,55 +336,6 @@ export async function globalSearch(
   const order = SEARCH_ENTITY_TYPES as readonly string[];
   groups.sort((a, b) => order.indexOf(a.entityType) - order.indexOf(b.entityType));
   return groups;
-}
-
-/**
- * Restricts document candidates to those whose parent entity is within the
- * caller's property data-scope. Records without a property (customer/tenant) are
- * organization-level and always allowed. Batched by entity type — no N+1.
- */
-async function filterDocumentsByPropertyScope<T extends { entityType: string; entityId: string }>(
-  db: Awaited<ReturnType<typeof getDb>>,
-  organizationId: string,
-  allowedPropertyIds: string[] | null,
-  rows: T[],
-): Promise<T[]> {
-  if (!allowedPropertyIds || rows.length === 0) return rows;
-  const allowed = new Set(allowedPropertyIds);
-  const idsOf = (type: string) => rows.filter((r) => r.entityType === type).map((r) => r.entityId);
-
-  // Resolve entityId -> propertyId per referenced entity type (batched).
-  const propertyByEntity = new Map<string, string | null>();
-  const record = (type: string, res: Array<{ id: string; propertyId: string | null }>) => {
-    for (const row of res) propertyByEntity.set(`${type}:${row.id}`, row.propertyId);
-  };
-  const unitIds = idsOf('unit');
-  const buildingIds = idsOf('building');
-  const contractIds = idsOf('contract');
-  const assetIds = idsOf('asset');
-
-  await Promise.all([
-    unitIds.length
-      ? db.select({ id: units.id, propertyId: units.propertyId }).from(units).where(and(eq(units.organizationId, organizationId), inArray(units.id, unitIds))).then((r) => record('unit', r))
-      : Promise.resolve(),
-    buildingIds.length
-      ? db.select({ id: buildings.id, propertyId: buildings.propertyId }).from(buildings).where(and(eq(buildings.organizationId, organizationId), inArray(buildings.id, buildingIds))).then((r) => record('building', r))
-      : Promise.resolve(),
-    contractIds.length
-      ? db.select({ id: contracts.id, propertyId: contracts.propertyId }).from(contracts).where(and(eq(contracts.organizationId, organizationId), inArray(contracts.id, contractIds))).then((r) => record('contract', r))
-      : Promise.resolve(),
-    assetIds.length
-      ? db.select({ id: maintenanceAssets.id, propertyId: maintenanceAssets.propertyId }).from(maintenanceAssets).where(and(eq(maintenanceAssets.organizationId, organizationId), inArray(maintenanceAssets.id, assetIds))).then((r) => record('asset', r))
-      : Promise.resolve(),
-  ]);
-
-  return rows.filter((r) => {
-    if (r.entityType === 'property') return allowed.has(r.entityId);
-    if (r.entityType === 'customer' || r.entityType === 'tenant') return true; // org-level, no property
-    const propertyId = propertyByEntity.get(`${r.entityType}:${r.entityId}`);
-    if (propertyId === undefined) return false; // unknown / unresolved entity type → exclude
-    return propertyId !== null && allowed.has(propertyId);
-  });
 }
 
 export interface FlatSearchResponse {

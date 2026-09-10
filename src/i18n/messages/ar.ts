@@ -89,6 +89,7 @@ export const ar: Messages = {
     audit: 'التدقيق والأمان',
     settings: 'الإعدادات',
     assets: 'الأصول',
+    compliance: 'الامتثال',
     groupPortfolio: 'المحفظة',
     groupLeasing: 'التأجير',
     groupFinance: 'المالية',

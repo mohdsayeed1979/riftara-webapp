@@ -1,9 +1,11 @@
 import 'server-only';
-import { and, eq, inArray, isNull, lte, sql, gte } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNotNull, isNull, lte, ne, sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import {
   contracts,
+  documents,
   leads,
+  maintenanceAssets,
   notifications,
   organizations,
   preventiveMaintenanceSchedules,
@@ -279,6 +281,115 @@ export async function runReservationExpiry(actor: Actor): Promise<{ expired: num
   return { expired, notified };
 }
 
+/* -------------------------------------------------------------------------- */
+/* Phase 13 — document & warranty expiry                                       */
+/* -------------------------------------------------------------------------- */
+
+// Upcoming windows + a short look-back so freshly-expired items also alert once.
+export const DOCUMENT_EXPIRY_WINDOW_DAYS = 60;
+export const WARRANTY_EXPIRY_WINDOW_DAYS = 90;
+const EXPIRED_LOOKBACK_DAYS = 30;
+
+/** Safe parent-entity link for a document (never the storage key/path). */
+function documentEntityHref(entityType: string, entityId: string): string {
+  switch (entityType) {
+    case 'property': return `/properties/${entityId}`;
+    case 'unit': return `/units/${entityId}`;
+    case 'contract': return `/contracts/${entityId}`;
+    case 'asset': return `/assets/${entityId}`;
+    case 'customer': return `/leasing/customers/${entityId}`;
+    case 'tenant': return `/tenants/${entityId}`;
+    default: return '/compliance?type=document';
+  }
+}
+
+/**
+ * Documents approaching (or freshly past) their expiry date. Only current,
+ * non-deleted documents with an expiry are considered. Each notification is
+ * targeted by the document's own requiredPermission (or documents:view), so a
+ * confidential document only ever alerts users who may access it; the storage
+ * key/path is never referenced.
+ */
+export async function generateDocumentExpiryNotifications(organizationId: string): Promise<number> {
+  const db = await getDb();
+  const rows = await db
+    .select({ id: documents.id, title: documents.title, entityType: documents.entityType, entityId: documents.entityId, expiryDate: documents.expiryDate, requiredPermission: documents.requiredPermission })
+    .from(documents)
+    .where(
+      and(
+        eq(documents.organizationId, organizationId),
+        isNull(documents.deletedAt),
+        eq(documents.isCurrentVersion, true),
+        isNotNull(documents.expiryDate),
+        gte(documents.expiryDate, isoInDays(-EXPIRED_LOOKBACK_DAYS)),
+        lte(documents.expiryDate, isoInDays(DOCUMENT_EXPIRY_WINDOW_DAYS)),
+      ),
+    )
+    .limit(500);
+
+  const today = todayIso();
+  let created = 0;
+  for (const d of rows) {
+    const expired = (d.expiryDate ?? '') < today;
+    const ok = await ensureNotification(db, {
+      organizationId,
+      notificationType: 'document_expiry',
+      entityType: 'document',
+      entityId: d.id,
+      recencyDays: 30,
+      requiredPermission: d.requiredPermission ?? 'documents:view',
+      severity: expired ? 'error' : 'warning',
+      title: expired ? `Document “${d.title}” has expired` : `Document “${d.title}” expires soon`,
+      body: `Expiry date ${d.expiryDate}.`,
+      linkHref: documentEntityHref(d.entityType, d.entityId),
+    });
+    if (ok) created += 1;
+  }
+  return created;
+}
+
+/**
+ * Assets whose warranty is approaching (or freshly past) expiry. Decommissioned
+ * assets are excluded. Targeted to assets:view holders.
+ */
+export async function generateWarrantyExpiryNotifications(organizationId: string): Promise<number> {
+  const db = await getDb();
+  const rows = await db
+    .select({ id: maintenanceAssets.id, code: maintenanceAssets.code, name: maintenanceAssets.nameEn, warrantyExpiryDate: maintenanceAssets.warrantyExpiryDate })
+    .from(maintenanceAssets)
+    .where(
+      and(
+        eq(maintenanceAssets.organizationId, organizationId),
+        isNull(maintenanceAssets.deletedAt),
+        ne(maintenanceAssets.status, 'decommissioned'),
+        isNotNull(maintenanceAssets.warrantyExpiryDate),
+        gte(maintenanceAssets.warrantyExpiryDate, isoInDays(-EXPIRED_LOOKBACK_DAYS)),
+        lte(maintenanceAssets.warrantyExpiryDate, isoInDays(WARRANTY_EXPIRY_WINDOW_DAYS)),
+      ),
+    )
+    .limit(500);
+
+  const today = todayIso();
+  let created = 0;
+  for (const a of rows) {
+    const expired = (a.warrantyExpiryDate ?? '') < today;
+    const ok = await ensureNotification(db, {
+      organizationId,
+      notificationType: 'warranty_expiry',
+      entityType: 'asset',
+      entityId: a.id,
+      recencyDays: 30,
+      requiredPermission: 'assets:view',
+      severity: expired ? 'error' : 'warning',
+      title: expired ? `Warranty expired: ${a.name}` : `Warranty expiring: ${a.name}`,
+      body: `Asset ${a.code} · warranty ${a.warrantyExpiryDate}.`,
+      linkHref: `/assets/${a.id}`,
+    });
+    if (ok) created += 1;
+  }
+  return created;
+}
+
 export interface AutomationSummary {
   organizationId: string;
   generated: {
@@ -289,6 +400,8 @@ export interface AutomationSummary {
     renewal: number;
     overdueInvoices: number;
     slaBreach: number;
+    documentExpiry: number;
+    warrantyExpiry: number;
   };
   reservationsExpired: number;
   notificationsCreated: number;
@@ -307,6 +420,8 @@ export async function generateAllNotifications(actor: Actor): Promise<Automation
   ];
   const overdue = await generateOverdueNotifications({ id: actor.id, organizationId: org, fullName: actor.fullName });
   const sla = await generateSlaBreachNotifications({ organizationId: org });
+  const documentExpiry = await generateDocumentExpiryNotifications(org);
+  const warrantyExpiry = await generateWarrantyExpiryNotifications(org);
   const expiry = await runReservationExpiry(actor);
 
   const generated = {
@@ -317,9 +432,11 @@ export async function generateAllNotifications(actor: Actor): Promise<Automation
     renewal,
     overdueInvoices: overdue.notificationsCreated,
     slaBreach: sla.notificationsCreated,
+    documentExpiry,
+    warrantyExpiry,
   };
   const notificationsCreated =
-    contractExpiry + reservationExpiry + preventiveMaintenance + leadFollowUp + renewal + overdue.notificationsCreated + sla.notificationsCreated + expiry.notified;
+    contractExpiry + reservationExpiry + preventiveMaintenance + leadFollowUp + renewal + overdue.notificationsCreated + sla.notificationsCreated + documentExpiry + warrantyExpiry + expiry.notified;
 
   return { organizationId: org, generated, reservationsExpired: expiry.expired, notificationsCreated };
 }

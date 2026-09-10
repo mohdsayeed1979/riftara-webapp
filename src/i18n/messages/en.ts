@@ -88,6 +88,7 @@ export const en = {
     audit: 'Audit & Security',
     settings: 'Settings',
     assets: 'Assets',
+    compliance: 'Compliance',
     groupPortfolio: 'Portfolio',
     groupLeasing: 'Leasing',
     groupFinance: 'Finance',
