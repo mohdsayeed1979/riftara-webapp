@@ -2,19 +2,23 @@ import 'server-only';
 import { and, asc, desc, eq, gte, inArray, isNull, lte, sql, type SQL } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import {
+  buildings,
   cities,
   contracts,
   districts,
   expenseCategories,
+  floors,
   invoices,
   maintenanceCosts,
   operatingExpenses,
   performanceSnapshots,
   properties,
   propertyTypes,
+  tenants,
   unitPricing,
   units,
   unitStatuses,
+  unitTypes,
   valuations,
   vacancyPeriods,
   workOrders,
@@ -56,6 +60,7 @@ export interface MetricScope {
   districtId?: string | null;
   propertyId?: string | null;
   buildingId?: string | null;
+  unitId?: string | null;
   /** Reporting period; defaults to the trailing twelve months. */
   periodStart?: Date;
   periodEnd?: Date;
@@ -98,6 +103,48 @@ export async function resolveScopedPropertyIds(scope: MetricScope): Promise<stri
     .from(properties)
     .where(propertyPredicate(scope));
   return rows.map((row) => row.id);
+}
+
+/** True when the scope narrows below property level (a building or a unit). */
+function isUnitScoped(scope: MetricScope): boolean {
+  return Boolean(scope.buildingId || scope.unitId);
+}
+
+/** Unit-table predicate: property scope, plus building/unit narrowing. */
+function unitScopePredicate(scope: MetricScope, propertyIds: string[]): SQL {
+  const conditions: SQL[] = [inArray(units.propertyId, propertyIds), isNull(units.deletedAt)];
+  if (scope.buildingId) conditions.push(eq(units.buildingId, scope.buildingId));
+  if (scope.unitId) conditions.push(eq(units.id, scope.unitId));
+  return and(...conditions) as SQL;
+}
+
+/** Resolves the concrete unit ids in scope. Returns [] when not unit-scoped. */
+export async function resolveScopedUnitIds(scope: MetricScope, propertyIds: string[]): Promise<string[]> {
+  if (!isUnitScoped(scope) || propertyIds.length === 0) return [];
+  const db = await getDb();
+  const rows = await db.select({ id: units.id }).from(units).where(unitScopePredicate(scope, propertyIds));
+  return rows.map((row) => row.id);
+}
+
+/**
+ * Scope predicate for a unit-linked financial table. Below property level it
+ * filters by the concrete scoped unit ids (rows without a matching unit fall
+ * out of the unit-specific view); otherwise it filters by property. An empty
+ * unit set resolves to a match-nothing predicate so the KPI reads zero.
+ */
+function financialScope(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  unitCol: any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  propertyCol: any,
+  scope: MetricScope,
+  propertyIds: string[],
+  unitIds: string[],
+): SQL {
+  if (isUnitScoped(scope)) {
+    return (unitIds.length ? inArray(unitCol, unitIds) : sql`false`) as SQL;
+  }
+  return inArray(propertyCol, propertyIds) as SQL;
 }
 
 function periodBounds(scope: MetricScope): { start: Date; end: Date } {
@@ -161,9 +208,9 @@ export async function getPortfolioSummary(scope: MetricScope): Promise<Portfolio
 
   if (propertyIds.length === 0) return emptySummary();
 
-  const unitScope = scope.buildingId
-    ? and(inArray(units.propertyId, propertyIds), eq(units.buildingId, scope.buildingId), isNull(units.deletedAt))
-    : and(inArray(units.propertyId, propertyIds), isNull(units.deletedAt));
+  const unitIds = await resolveScopedUnitIds(scope, propertyIds);
+  if (isUnitScoped(scope) && unitIds.length === 0) return emptySummary();
+  const unitScope = unitScopePredicate(scope, propertyIds);
 
   // --- Units, occupancy, area, annual rental value -------------------------
   const [unitRow] = await db
@@ -215,7 +262,7 @@ export async function getPortfolioSummary(scope: MetricScope): Promise<Portfolio
     .from(contracts)
     .where(
       and(
-        inArray(contracts.propertyId, propertyIds),
+        financialScope(contracts.unitId, contracts.propertyId, scope, propertyIds, unitIds),
         eq(contracts.isActive, true),
         isNull(contracts.deletedAt),
       ),
@@ -232,7 +279,7 @@ export async function getPortfolioSummary(scope: MetricScope): Promise<Portfolio
     .from(invoices)
     .where(
       and(
-        inArray(invoices.propertyId, propertyIds),
+        financialScope(invoices.unitId, invoices.propertyId, scope, propertyIds, unitIds),
         gte(invoices.invoiceDate, iso(start)),
         lte(invoices.invoiceDate, iso(end)),
         isNull(invoices.deletedAt),
@@ -243,7 +290,7 @@ export async function getPortfolioSummary(scope: MetricScope): Promise<Portfolio
   const [overdueRow] = await db
     .select({ overdue: sql<number>`coalesce(sum(${invoices.balanceAmount}), 0)::float8` })
     .from(invoices)
-    .where(and(inArray(invoices.propertyId, propertyIds), eq(invoices.status, 'overdue')));
+    .where(and(financialScope(invoices.unitId, invoices.propertyId, scope, propertyIds, unitIds), eq(invoices.status, 'overdue')));
 
   // --- OPEX and maintenance ------------------------------------------------
   // Only expense categories flagged includedInOpex feed OPEX/NOI, so CAPEX and
@@ -254,7 +301,7 @@ export async function getPortfolioSummary(scope: MetricScope): Promise<Portfolio
     .innerJoin(expenseCategories, eq(expenseCategories.id, operatingExpenses.categoryId))
     .where(
       and(
-        inArray(operatingExpenses.propertyId, propertyIds),
+        financialScope(operatingExpenses.unitId, operatingExpenses.propertyId, scope, propertyIds, unitIds),
         gte(operatingExpenses.incurredOn, iso(start)),
         lte(operatingExpenses.incurredOn, iso(end)),
         isNull(operatingExpenses.deletedAt),
@@ -267,7 +314,7 @@ export async function getPortfolioSummary(scope: MetricScope): Promise<Portfolio
     .from(maintenanceCosts)
     .where(
       and(
-        inArray(maintenanceCosts.propertyId, propertyIds),
+        financialScope(maintenanceCosts.unitId, maintenanceCosts.propertyId, scope, propertyIds, unitIds),
         gte(maintenanceCosts.incurredOn, iso(start)),
         lte(maintenanceCosts.incurredOn, iso(end)),
       ),
@@ -279,7 +326,7 @@ export async function getPortfolioSummary(scope: MetricScope): Promise<Portfolio
     .from(vacancyPeriods)
     .where(
       and(
-        inArray(vacancyPeriods.propertyId, propertyIds),
+        financialScope(vacancyPeriods.unitId, vacancyPeriods.propertyId, scope, propertyIds, unitIds),
         isNull(vacancyPeriods.vacancyEndDate),
       ),
     );
@@ -288,7 +335,7 @@ export async function getPortfolioSummary(scope: MetricScope): Promise<Portfolio
   const waleRows = await db
     .select({ annualRent: contracts.annualRent, endDate: contracts.endDate })
     .from(contracts)
-    .where(and(inArray(contracts.propertyId, propertyIds), eq(contracts.isActive, true)));
+    .where(and(financialScope(contracts.unitId, contracts.propertyId, scope, propertyIds, unitIds), eq(contracts.isActive, true)));
 
   const waleValue = wale(
     waleRows.map((row) => ({
@@ -1142,7 +1189,7 @@ export async function getUnitStatusBreakdown(scope: MetricScope): Promise<Status
     })
     .from(units)
     .innerJoin(unitStatuses, eq(unitStatuses.id, units.statusId))
-    .where(and(inArray(units.propertyId, propertyIds), isNull(units.deletedAt)))
+    .where(unitScopePredicate(scope, propertyIds))
     .groupBy(unitStatuses.key, unitStatuses.nameEn, unitStatuses.colorToken, unitStatuses.availabilityClass, unitStatuses.sortOrder)
     .orderBy(asc(unitStatuses.sortOrder));
 
@@ -1183,3 +1230,200 @@ export async function getAvailabilityBreakdown(scope: MetricScope) {
 }
 
 export { propertyPredicate };
+
+/* -------------------------------------------------------------------------- */
+/* Dashboard hierarchical filters (City → Building → Unit)                     */
+/* -------------------------------------------------------------------------- */
+
+export interface DashboardFilterOptions {
+  cities: Array<{ id: string; name: string }>;
+  buildings: Array<{ id: string; name: string; cityId: string; propertyId: string; propertyName: string }>;
+  units: Array<{ id: string; name: string; buildingId: string | null; propertyId: string; cityId: string }>;
+}
+
+/**
+ * Real hierarchy options for the dashboard filters, scoped to the user's
+ * organization and data scope. Buildings and units carry their parent ids so
+ * the client can cascade and the server can resolve a selection to a concrete
+ * city/property/building/unit scope. Any id not present here is out of scope and
+ * is ignored server-side (an IDOR-safe allow-list).
+ */
+export async function getDashboardFilterOptions(user: SessionUser): Promise<DashboardFilterOptions> {
+  const db = await getDb();
+  const scope = scopeFromSession(user);
+  const propertyIds = await resolveScopedPropertyIds(scope);
+  if (propertyIds.length === 0) return { cities: [], buildings: [], units: [] };
+
+  const [cityRows, buildingRows, unitRows] = await Promise.all([
+    db
+      .selectDistinct({ id: cities.id, name: cities.nameEn })
+      .from(properties)
+      .innerJoin(cities, eq(cities.id, properties.cityId))
+      .where(propertyPredicate(scope))
+      .orderBy(asc(cities.nameEn)),
+    db
+      .select({ id: buildings.id, name: buildings.nameEn, cityId: properties.cityId, propertyId: buildings.propertyId, propertyName: properties.nameEn })
+      .from(buildings)
+      .innerJoin(properties, eq(properties.id, buildings.propertyId))
+      .where(and(inArray(buildings.propertyId, propertyIds), isNull(buildings.deletedAt)))
+      .orderBy(asc(buildings.nameEn)),
+    db
+      .select({ id: units.id, name: units.unitNumber, buildingId: units.buildingId, propertyId: units.propertyId, cityId: properties.cityId })
+      .from(units)
+      .innerJoin(properties, eq(properties.id, units.propertyId))
+      .where(and(inArray(units.propertyId, propertyIds), isNull(units.deletedAt)))
+      .orderBy(asc(units.unitNumber)),
+  ]);
+
+  return {
+    cities: cityRows,
+    buildings: buildingRows.map((b) => ({ id: b.id, name: b.name, cityId: b.cityId, propertyId: b.propertyId, propertyName: b.propertyName })),
+    units: unitRows.map((u) => ({ id: u.id, name: u.name, buildingId: u.buildingId, propertyId: u.propertyId, cityId: u.cityId })),
+  };
+}
+
+export interface UnitFocus {
+  unit: {
+    id: string;
+    unitNumber: string;
+    code: string;
+    unitType: string;
+    propertyName: string;
+    buildingName: string | null;
+    floorName: string | null;
+    cityName: string;
+    statusKey: string;
+    statusLabel: string;
+    availabilityClass: string;
+    leasableArea: number | null;
+    bedroomCount: number | null;
+    bathroomCount: number | null;
+  };
+  contract: {
+    contractNumber: string;
+    tenantName: string;
+    startDate: string;
+    endDate: string;
+    annualRent: number;
+    status: string;
+    renewalStatus: string;
+  } | null;
+  financial: { billed: number; collected: number; outstanding: number; collectionRate: number };
+  maintenance: { openWorkOrders: number; completedWorkOrders: number; totalMaintenanceCost: number; lastCompletedAt: string | null };
+}
+
+/** Unit 360 summary for a specifically selected unit (organization-scoped). */
+export async function getUnitFocus(organizationId: string, unitId: string): Promise<UnitFocus | null> {
+  const db = await getDb();
+  const [unit] = await db
+    .select({
+      id: units.id,
+      unitNumber: units.unitNumber,
+      code: units.code,
+      unitType: unitTypes.nameEn,
+      propertyName: properties.nameEn,
+      buildingName: buildings.nameEn,
+      floorName: floors.nameEn,
+      cityName: cities.nameEn,
+      statusKey: unitStatuses.key,
+      statusLabel: unitStatuses.nameEn,
+      availabilityClass: units.computedAvailabilityClass,
+      leasableArea: units.leasableArea,
+      bedroomCount: units.bedroomCount,
+      bathroomCount: units.bathroomCount,
+    })
+    .from(units)
+    .innerJoin(properties, eq(properties.id, units.propertyId))
+    .innerJoin(unitTypes, eq(unitTypes.id, units.unitTypeId))
+    .innerJoin(unitStatuses, eq(unitStatuses.id, units.statusId))
+    .innerJoin(cities, eq(cities.id, properties.cityId))
+    .leftJoin(buildings, eq(buildings.id, units.buildingId))
+    .leftJoin(floors, eq(floors.id, units.floorId))
+    .where(and(eq(units.id, unitId), eq(units.organizationId, organizationId), isNull(units.deletedAt)))
+    .limit(1);
+  if (!unit) return null;
+
+  const [contractRow] = await db
+    .select({
+      contractNumber: contracts.contractNumber,
+      tenantName: tenants.displayName,
+      startDate: contracts.startDate,
+      endDate: contracts.endDate,
+      annualRent: contracts.annualRent,
+      status: contracts.status,
+      renewalStatus: contracts.renewalStatus,
+    })
+    .from(contracts)
+    .innerJoin(tenants, eq(tenants.id, contracts.tenantId))
+    .where(and(eq(contracts.unitId, unitId), eq(contracts.organizationId, organizationId), eq(contracts.isActive, true), isNull(contracts.deletedAt)))
+    .orderBy(desc(contracts.startDate))
+    .limit(1);
+
+  const [invoiceRow] = await db
+    .select({
+      billed: sql<number>`coalesce(sum(${invoices.totalAmount}), 0)::float8`,
+      collected: sql<number>`coalesce(sum(${invoices.paidAmount}), 0)::float8`,
+      outstanding: sql<number>`coalesce(sum(${invoices.balanceAmount}), 0)::float8`,
+    })
+    .from(invoices)
+    .where(and(eq(invoices.unitId, unitId), eq(invoices.organizationId, organizationId), isNull(invoices.deletedAt)));
+
+  const [woRow] = await db
+    .select({
+      open: sql<number>`count(*) filter (where ${workOrders.status} in ('open','assigned','in_progress','pending'))::int`,
+      completed: sql<number>`count(*) filter (where ${workOrders.status} = 'completed')::int`,
+      lastCompletedAt: sql<string | null>`max(${workOrders.completedAt})`,
+    })
+    .from(workOrders)
+    .where(and(eq(workOrders.unitId, unitId), eq(workOrders.organizationId, organizationId), isNull(workOrders.deletedAt)));
+
+  const [costRow] = await db
+    .select({ total: sql<number>`coalesce(sum(${maintenanceCosts.amount}), 0)::float8` })
+    .from(maintenanceCosts)
+    .where(and(eq(maintenanceCosts.unitId, unitId), eq(maintenanceCosts.organizationId, organizationId)));
+
+  const billed = round2(Number(invoiceRow?.billed ?? 0));
+  const collected = round2(Number(invoiceRow?.collected ?? 0));
+
+  return {
+    unit: {
+      id: unit.id,
+      unitNumber: unit.unitNumber,
+      code: unit.code,
+      unitType: unit.unitType,
+      propertyName: unit.propertyName,
+      buildingName: unit.buildingName,
+      floorName: unit.floorName,
+      cityName: unit.cityName,
+      statusKey: unit.statusKey,
+      statusLabel: unit.statusLabel,
+      availabilityClass: unit.availabilityClass,
+      leasableArea: unit.leasableArea,
+      bedroomCount: unit.bedroomCount,
+      bathroomCount: unit.bathroomCount,
+    },
+    contract: contractRow
+      ? {
+          contractNumber: contractRow.contractNumber,
+          tenantName: contractRow.tenantName,
+          startDate: contractRow.startDate,
+          endDate: contractRow.endDate,
+          annualRent: Number(contractRow.annualRent),
+          status: contractRow.status,
+          renewalStatus: contractRow.renewalStatus,
+        }
+      : null,
+    financial: {
+      billed,
+      collected,
+      outstanding: round2(Number(invoiceRow?.outstanding ?? 0)),
+      collectionRate: collectionRate({ billed, collected }),
+    },
+    maintenance: {
+      openWorkOrders: Number(woRow?.open ?? 0),
+      completedWorkOrders: Number(woRow?.completed ?? 0),
+      totalMaintenanceCost: round2(Number(costRow?.total ?? 0)),
+      lastCompletedAt: woRow?.lastCompletedAt ?? null,
+    },
+  };
+}

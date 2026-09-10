@@ -17,15 +17,17 @@ import {
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardHeader } from '@/components/ui/card';
+import { Card, CardBody, CardHeader } from '@/components/ui/card';
 import { KpiCard } from '@/components/ui/kpi-card';
 import { EmptyState } from '@/components/ui/misc';
 import { KpiGrid, PageHeader } from '@/components/ui/page';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Table, TableContainer, TBody, TD, TH, THead, TR } from '@/components/ui/table';
+import { DetailList, DetailRow } from '@/components/ui/page';
 import { DashboardCharts } from '@/features/dashboard/dashboard-charts';
 import { PeriodSelector } from '@/features/dashboard/period-selector';
 import { ExceptionsPanel } from '@/features/dashboard/exceptions-panel';
+import { DashboardScopeFilters } from '@/features/dashboard/scope-filters';
 import { requirePermission } from '@/lib/auth/guard';
 import { formatCompactCurrency, formatDate, formatPercent, formatRelativeTime } from '@/lib/format';
 import { getRequestLocale, getRequestLocationId } from '@/lib/locale';
@@ -38,13 +40,17 @@ import {
 import {
   getAvailabilityBreakdown,
   getCityBreakdown,
+  getDashboardFilterOptions,
   getExecutiveExceptions,
   getPortfolioSummary,
   getPropertyPerformance,
   getTrendSeries,
+  getUnitFocus,
   getUnitStatusBreakdown,
   scopeFromSession,
+  type UnitFocus,
 } from '@/services/metrics-service';
+import { formatCurrency } from '@/lib/format';
 
 export const metadata: Metadata = { title: 'Executive Dashboard' };
 export const dynamic = 'force-dynamic';
@@ -74,12 +80,12 @@ function resolvePeriod(value: string | undefined): { months: number; label: stri
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ period?: string; propertyId?: string }>;
+  searchParams: Promise<{ period?: string; city?: string; building?: string; unit?: string }>;
 }) {
   const user = await requirePermission('dashboard:view');
   const params = await searchParams;
   const locale = await getRequestLocale();
-  const cityId = await getRequestLocationId();
+  const cookieCityId = await getRequestLocationId();
   const period = resolvePeriod(params.period);
 
   const periodEnd = new Date();
@@ -87,12 +93,39 @@ export default async function DashboardPage({
     Date.UTC(periodEnd.getUTCFullYear(), periodEnd.getUTCMonth() - period.months + 1, 1),
   );
 
+  // Resolve the City → Building → Unit selection against the scoped hierarchy.
+  // Any id outside the user's scope is ignored (IDOR-safe allow-list), and a
+  // selection cascades: a unit implies its building/property/city, a building
+  // implies its property/city.
+  const filterOptions = await getDashboardFilterOptions(user);
+  const selectedUnit = params.unit ? filterOptions.units.find((u) => u.id === params.unit) ?? null : null;
+  const selectedBuilding = selectedUnit
+    ? filterOptions.buildings.find((b) => b.id === selectedUnit.buildingId) ?? null
+    : params.building
+      ? filterOptions.buildings.find((b) => b.id === params.building) ?? null
+      : null;
+  const resolvedCityId =
+    selectedUnit?.cityId ??
+    selectedBuilding?.cityId ??
+    (params.city ? filterOptions.cities.find((c) => c.id === params.city)?.id ?? null : null) ??
+    cookieCityId;
+  const resolvedPropertyId = selectedUnit?.propertyId ?? selectedBuilding?.propertyId ?? null;
+  const buildingId = selectedBuilding?.id ?? null;
+  const unitId = selectedUnit?.id ?? null;
+
   const scope = scopeFromSession(user, {
-    cityId,
-    propertyId: params.propertyId ?? null,
+    cityId: resolvedCityId,
+    propertyId: resolvedPropertyId,
+    buildingId,
+    unitId,
     periodStart,
     periodEnd,
   });
+
+  const cityName = filterOptions.cities.find((c) => c.id === resolvedCityId)?.name ?? 'All Cities';
+  const buildingName = selectedBuilding?.name ?? 'All Buildings';
+  const unitName = selectedUnit?.name ?? 'All Units';
+  const unitFocus = unitId ? await getUnitFocus(user.organizationId, unitId) : null;
 
   const [
     summary,
@@ -125,9 +158,17 @@ export default async function DashboardPage({
     <div className="flex flex-col gap-5">
       <PageHeader
         title={`${greetingKey(new Date())}, ${firstName}`}
-        subtitle="Here's the latest overview of your real estate portfolio."
+        subtitle={`${cityName} → ${buildingName} → ${unitName}`}
         actions={
-          <>
+          <div className="flex flex-wrap items-end gap-2">
+            <DashboardScopeFilters
+              cities={filterOptions.cities}
+              buildings={filterOptions.buildings}
+              units={filterOptions.units}
+              cityId={resolvedCityId}
+              buildingId={buildingId}
+              unitId={unitId}
+            />
             <PeriodSelector value={params.period ?? '12m'} />
             {can(user, 'properties:create') ? (
               <Button asChild>
@@ -137,10 +178,24 @@ export default async function DashboardPage({
                 </Link>
               </Button>
             ) : null}
-          </>
+          </div>
         }
       />
 
+      {unitFocus ? <UnitFocusPanel focus={unitFocus} locale={locale} /> : null}
+
+      {availability.total === 0 ? (
+        <Card>
+          <EmptyState
+            icon={<Building2 />}
+            title="No units found for the selected filters"
+            description="Adjust or clear the City / Building / Unit filters to see portfolio metrics."
+          />
+        </Card>
+      ) : null}
+
+      {availability.total > 0 ? (
+      <>
       {/* Unit status KPIs — each drills into the filtered unit inventory. */}
       <KpiGrid columns={5}>
         <KpiCard
@@ -580,7 +635,62 @@ export default async function DashboardPage({
           )}
         </Card>
       </div>
+      </>
+      ) : null}
     </div>
+  );
+}
+
+function UnitFocusPanel({ focus, locale }: { focus: UnitFocus; locale: 'en' | 'ar' }) {
+  const { unit, contract, financial, maintenance } = focus;
+  const currency = (v: number) => formatCurrency(v, { locale });
+  const day = (v: string | null) => (v ? formatDate(v, { locale, style: 'medium' }) : 'N/A');
+  const na = (v: string | number | null | undefined) => (v === null || v === undefined || v === '' ? 'N/A' : String(v));
+
+  return (
+    <Card>
+      <CardHeader
+        title={`Unit ${unit.unitNumber} — 360° View`}
+        description={`${unit.propertyName}${unit.buildingName ? ` · ${unit.buildingName}` : ''} · ${unit.cityName}`}
+        action={<StatusBadge status={unit.availabilityClass} label={unit.statusLabel} />}
+      />
+      <CardBody>
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-4">
+          <DetailList>
+            <DetailRow label="Unit Number" value={unit.unitNumber} />
+            <DetailRow label="Code" value={unit.code} />
+            <DetailRow label="Type" value={unit.unitType} />
+            <DetailRow label="Floor" value={na(unit.floorName)} />
+            <DetailRow label="Area (m²)" value={unit.leasableArea != null ? unit.leasableArea.toLocaleString() : 'N/A'} />
+            <DetailRow label="Bedrooms" value={na(unit.bedroomCount)} />
+            <DetailRow label="Bathrooms" value={na(unit.bathroomCount)} />
+          </DetailList>
+
+          <DetailList>
+            <DetailRow label="Tenant" value={contract ? contract.tenantName : 'N/A'} />
+            <DetailRow label="Contract" value={contract ? contract.contractNumber : 'N/A'} />
+            <DetailRow label="Start" value={contract ? day(contract.startDate) : 'N/A'} />
+            <DetailRow label="End" value={contract ? day(contract.endDate) : 'N/A'} />
+            <DetailRow label="Annual Rent" value={contract ? currency(contract.annualRent) : 'N/A'} />
+            <DetailRow label="Lease Status" value={contract ? <StatusBadge status={contract.status} dot={false} /> : 'N/A'} />
+          </DetailList>
+
+          <DetailList>
+            <DetailRow label="Billed" value={currency(financial.billed)} />
+            <DetailRow label="Collected" value={currency(financial.collected)} />
+            <DetailRow label="Outstanding" value={currency(financial.outstanding)} />
+            <DetailRow label="Collection Rate" value={formatPercent(financial.collectionRate, { locale })} />
+          </DetailList>
+
+          <DetailList>
+            <DetailRow label="Open Work Orders" value={String(maintenance.openWorkOrders)} />
+            <DetailRow label="Completed" value={String(maintenance.completedWorkOrders)} />
+            <DetailRow label="Total Maintenance Cost" value={currency(maintenance.totalMaintenanceCost)} />
+            <DetailRow label="Last Maintenance" value={day(maintenance.lastCompletedAt)} />
+          </DetailList>
+        </div>
+      </CardBody>
+    </Card>
   );
 }
 

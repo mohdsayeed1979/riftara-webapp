@@ -15,7 +15,12 @@ import {
   workOrders,
   maintenanceCategories,
 } from '@/db/schema';
-import { resolveScopedPropertyIds, type MetricScope } from './metrics-service';
+import { resolveScopedPropertyIds, resolveScopedUnitIds, type MetricScope } from './metrics-service';
+
+/** True when the scope narrows below property level (a building or a unit). */
+function isUnitScoped(scope: MetricScope): boolean {
+  return Boolean(scope.buildingId || scope.unitId);
+}
 
 /**
  * List queries backing the dashboard panels. Kept separate from the KPI
@@ -57,7 +62,14 @@ export async function getRecentLeads(scope: MetricScope, limit = 6): Promise<Rec
     .leftJoin(leadSources, eq(leadSources.id, leads.sourceId))
     .leftJoin(properties, eq(properties.id, leads.requestedPropertyId))
     .leftJoin(users, eq(users.id, leads.assignedUserId))
-    .where(and(eq(leads.organizationId, scope.organizationId), isNull(leads.deletedAt)))
+    .where(
+      and(
+        eq(leads.organizationId, scope.organizationId),
+        isNull(leads.deletedAt),
+        // Leads are not building-scoped; narrow only to a specifically selected unit.
+        scope.unitId ? eq(leads.requestedUnitId, scope.unitId) : undefined,
+      ),
+    )
     .orderBy(desc(leads.createdAt))
     .limit(limit);
 
@@ -84,6 +96,8 @@ export async function getUpcomingRenewals(
   const db = await getDb();
   const propertyIds = await resolveScopedPropertyIds(scope);
   if (propertyIds.length === 0) return [];
+  const unitIds = await resolveScopedUnitIds(scope, propertyIds);
+  if (isUnitScoped(scope) && unitIds.length === 0) return [];
 
   const horizon = new Date();
   horizon.setUTCDate(horizon.getUTCDate() + windowDays);
@@ -105,7 +119,7 @@ export async function getUpcomingRenewals(
     .innerJoin(units, eq(units.id, contracts.unitId))
     .where(
       and(
-        inArray(contracts.propertyId, propertyIds),
+        isUnitScoped(scope) ? inArray(contracts.unitId, unitIds) : inArray(contracts.propertyId, propertyIds),
         eq(contracts.isActive, true),
         lte(contracts.endDate, horizon.toISOString().slice(0, 10)),
       ),
@@ -140,6 +154,8 @@ export async function getRecentWorkOrders(
   const db = await getDb();
   const propertyIds = await resolveScopedPropertyIds(scope);
   if (propertyIds.length === 0) return [];
+  const unitIds = await resolveScopedUnitIds(scope, propertyIds);
+  if (isUnitScoped(scope) && unitIds.length === 0) return [];
 
   const rows = await db
     .select({
@@ -157,7 +173,12 @@ export async function getRecentWorkOrders(
     .innerJoin(properties, eq(properties.id, workOrders.propertyId))
     .leftJoin(units, eq(units.id, workOrders.unitId))
     .leftJoin(maintenanceCategories, eq(maintenanceCategories.id, workOrders.categoryId))
-    .where(and(inArray(workOrders.propertyId, propertyIds), isNull(workOrders.deletedAt)))
+    .where(
+      and(
+        isUnitScoped(scope) ? inArray(workOrders.unitId, unitIds) : inArray(workOrders.propertyId, propertyIds),
+        isNull(workOrders.deletedAt),
+      ),
+    )
     .orderBy(desc(workOrders.createdAt))
     .limit(limit);
 
