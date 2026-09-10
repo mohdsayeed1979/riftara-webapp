@@ -19,6 +19,7 @@ import { DetailList, DetailRow, MetaItem, PageHeader } from '@/components/ui/pag
 import { PropertyImage } from '@/components/ui/property-image';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { PropertyTabs } from '@/features/properties/property-tabs';
+import { PropertyActions } from '@/features/properties/property-actions';
 import { can, requirePermission } from '@/lib/auth/guard';
 import { formatArea, formatCompactCurrency, formatDate, formatPercent } from '@/lib/format';
 import { getRequestLocale } from '@/lib/locale';
@@ -104,6 +105,17 @@ export default async function PropertyDetailPage({
                   Edit Property
                 </Link>
               </Button>
+            ) : null}
+            {can(user, 'properties:delete') ? (
+              <PropertyActions
+                propertyId={id}
+                name={property.nameEn}
+                code={property.code}
+                location={`${property.cityName}${property.districtName ? `, ${property.districtName}` : ''}`}
+                canEdit={can(user, 'properties:edit')}
+                canDelete
+                variant="detail"
+              />
             ) : null}
           </>
         }

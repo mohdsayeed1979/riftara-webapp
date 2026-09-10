@@ -1,21 +1,34 @@
 import 'server-only';
 import { and, asc, count, desc, eq, ilike, inArray, isNull, or, sql, type SQL } from 'drizzle-orm';
+import type { PgTable } from 'drizzle-orm/pg-core';
 import { getDb } from '@/db/client';
 import {
   buildings,
   cities,
+  contracts,
   districts,
+  documents,
+  invoices,
+  leads,
+  maintenanceAssets,
+  payments,
   portfolios,
   properties,
   propertyOwnerships,
   propertyTypes,
+  proposals,
   regions,
+  reservations,
   units,
   unitStatuses,
   users,
+  valuations,
+  viewings,
+  workOrders,
 } from '@/db/schema';
 import { recordAudit } from '@/lib/audit';
-import { notFound } from '@/lib/errors';
+import { conflict, notFound } from '@/lib/errors';
+import type { DbExecutor } from '@/db/types';
 import type { SessionUser } from '@/lib/auth/session';
 import { occupancyRate } from '@/lib/calculations/metrics';
 import { round2 } from '@/lib/utils';
@@ -648,6 +661,174 @@ export async function updateProperty(
       entityLabel: input.nameEn, previousValue: { code: existing.code, nameEn: existing.nameEn }, newValue: values,
       actor: { id: actor.id, fullName: actor.fullName },
     });
+    return { id: propertyId };
+  });
+}
+
+/**
+ * Dependency snapshot used to decide whether a property may be permanently
+ * deleted, and to explain to the user why it cannot. Every count excludes
+ * soft-deleted rows. A property with ANY dependency must be archived, not
+ * hard-deleted — this keeps signed contracts and financial records intact
+ * (BR-012/BR-013) and preserves history.
+ */
+export interface PropertyDependencies {
+  buildings: number;
+  units: number;
+  contracts: number;
+  invoices: number;
+  payments: number;
+  reservations: number;
+  proposals: number;
+  viewings: number;
+  leads: number;
+  workOrders: number;
+  assets: number;
+  valuations: number;
+  documents: number;
+  total: number;
+  canHardDelete: boolean;
+}
+
+/**
+ * Counts dependencies on the given executor. Queries run SEQUENTIALLY — the dev
+ * PGlite driver is single-connection and cannot service concurrent queries, and
+ * this also runs safely inside an open transaction (pass `tx`).
+ */
+async function countPropertyDependencies(executor: DbExecutor, propertyId: string): Promise<PropertyDependencies> {
+  const countWhere = async (table: PgTable, where: SQL | undefined): Promise<number> => {
+    const [row] = await executor.select({ total: count() }).from(table).where(where);
+    return Number(row?.total ?? 0);
+  };
+
+  const buildingsN = await countWhere(buildings, and(eq(buildings.propertyId, propertyId), isNull(buildings.deletedAt)));
+  const unitsN = await countWhere(units, and(eq(units.propertyId, propertyId), isNull(units.deletedAt)));
+  const contractsN = await countWhere(contracts, and(eq(contracts.propertyId, propertyId), isNull(contracts.deletedAt)));
+  const invoicesN = await countWhere(invoices, and(eq(invoices.propertyId, propertyId), isNull(invoices.deletedAt)));
+  const paymentsN = await countWhere(payments, and(eq(payments.propertyId, propertyId), isNull(payments.deletedAt)));
+  const reservationsN = await countWhere(reservations, and(eq(reservations.propertyId, propertyId), isNull(reservations.deletedAt)));
+  const proposalsN = await countWhere(proposals, and(eq(proposals.propertyId, propertyId), isNull(proposals.deletedAt)));
+  const viewingsN = await countWhere(viewings, and(eq(viewings.propertyId, propertyId), isNull(viewings.deletedAt)));
+  const leadsN = await countWhere(leads, and(eq(leads.requestedPropertyId, propertyId), isNull(leads.deletedAt)));
+  const workOrdersN = await countWhere(workOrders, and(eq(workOrders.propertyId, propertyId), isNull(workOrders.deletedAt)));
+  const assetsN = await countWhere(maintenanceAssets, and(eq(maintenanceAssets.propertyId, propertyId), isNull(maintenanceAssets.deletedAt)));
+  const valuationsN = await countWhere(valuations, and(eq(valuations.propertyId, propertyId), isNull(valuations.deletedAt)));
+  const documentsN = await countWhere(
+    documents,
+    and(
+      eq(documents.entityType, 'property'),
+      eq(documents.entityId, propertyId),
+      eq(documents.isCurrentVersion, true),
+      isNull(documents.deletedAt),
+    ),
+  );
+
+  const total =
+    buildingsN + unitsN + contractsN + invoicesN + paymentsN + reservationsN + proposalsN +
+    viewingsN + leadsN + workOrdersN + assetsN + valuationsN + documentsN;
+
+  return {
+    buildings: buildingsN,
+    units: unitsN,
+    contracts: contractsN,
+    invoices: invoicesN,
+    payments: paymentsN,
+    reservations: reservationsN,
+    proposals: proposalsN,
+    viewings: viewingsN,
+    leads: leadsN,
+    workOrders: workOrdersN,
+    assets: assetsN,
+    valuations: valuationsN,
+    documents: documentsN,
+    total,
+    canHardDelete: total === 0,
+  };
+}
+
+export async function getPropertyDependencies(
+  organizationId: string,
+  propertyId: string,
+): Promise<PropertyDependencies> {
+  const db = await getDb();
+  // Authorize: the property must exist within the caller's organization.
+  const [owned] = await db
+    .select({ id: properties.id })
+    .from(properties)
+    .where(and(eq(properties.id, propertyId), eq(properties.organizationId, organizationId), isNull(properties.deletedAt)))
+    .limit(1);
+  if (!owned) throw notFound('Property', propertyId);
+  return countPropertyDependencies(db, propertyId);
+}
+
+/**
+ * Archives (soft-deletes) a property. The record and all its related data are
+ * preserved; the property simply disappears from active lists, metrics and
+ * search (every query filters `deletedAt IS NULL`). This is the safe,
+ * reversible alternative to deletion and is always available to a user holding
+ * `properties:delete`, regardless of dependencies.
+ */
+export async function archiveProperty(actor: SessionUser, propertyId: string): Promise<{ id: string }> {
+  const db = await getDb();
+  return db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select({ id: properties.id, code: properties.code, nameEn: properties.nameEn })
+      .from(properties)
+      .where(and(eq(properties.id, propertyId), eq(properties.organizationId, actor.organizationId), isNull(properties.deletedAt)))
+      .limit(1);
+    if (!existing) throw notFound('Property', propertyId);
+
+    await tx.update(properties).set({ deletedAt: new Date(), updatedAt: new Date() }).where(eq(properties.id, propertyId));
+    await recordAudit(tx, {
+      organizationId: actor.organizationId,
+      action: 'soft_delete',
+      entityType: 'property',
+      entityId: propertyId,
+      entityLabel: existing.nameEn,
+      reason: 'property_archived',
+      previousValue: { code: existing.code, nameEn: existing.nameEn },
+      actor: { id: actor.id, fullName: actor.fullName },
+    });
+    return { id: propertyId };
+  });
+}
+
+/**
+ * Permanently deletes a property. Only permitted when the property has NO
+ * dependent business data — the dependency check is re-run inside the
+ * transaction so the decision cannot race with concurrent inserts. Anything
+ * else must be archived instead. Ownership rows (the property's own setup) are
+ * removed by the ON DELETE CASCADE foreign key.
+ */
+export async function deleteProperty(actor: SessionUser, propertyId: string): Promise<{ id: string }> {
+  const db = await getDb();
+  return db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select({ id: properties.id, code: properties.code, nameEn: properties.nameEn })
+      .from(properties)
+      .where(and(eq(properties.id, propertyId), eq(properties.organizationId, actor.organizationId), isNull(properties.deletedAt)))
+      .limit(1);
+    if (!existing) throw notFound('Property', propertyId);
+
+    // Re-count inside the transaction so the decision cannot race with a
+    // concurrent insert, and so it runs on the same connection as the delete.
+    const deps = await countPropertyDependencies(tx, propertyId);
+    if (!deps.canHardDelete) {
+      throw conflict('This property has related records and cannot be permanently deleted. Archive it instead.');
+    }
+
+    // Audit is written before the row is removed (append-only log; entityId is
+    // a plain reference, not an FK, so it survives the delete).
+    await recordAudit(tx, {
+      organizationId: actor.organizationId,
+      action: 'delete',
+      entityType: 'property',
+      entityId: propertyId,
+      entityLabel: existing.nameEn,
+      previousValue: { code: existing.code, nameEn: existing.nameEn },
+      actor: { id: actor.id, fullName: actor.fullName },
+    });
+    await tx.delete(properties).where(eq(properties.id, propertyId));
     return { id: propertyId };
   });
 }

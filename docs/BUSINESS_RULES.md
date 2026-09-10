@@ -26,6 +26,21 @@ transaction — not only through the application.
 | **BR-017** | All sensitive changes are audited | `lib/audit`; trigger makes `audit_logs` append-only | `business-rules.test.ts` |
 | **BR-018** | Integration failures are logged and traceable | `integration-service.logIntegrationEvent` writes `integration_logs` | Integration Hub |
 
+## Property lifecycle (delete vs. archive)
+
+A property is **never** hard-deleted while it holds business data. Before a
+permanent delete, `property-service.getPropertyDependencies` counts related
+buildings, units, contracts, invoices, payments, reservations, proposals,
+viewings, leads, work orders, assets, valuations and documents (all excluding
+soft-deleted rows). If any exist, `deleteProperty` refuses and the user is
+directed to **archive** instead — this upholds BR-012/BR-013 by keeping signed
+contracts and financial records intact. **Archive** (`archiveProperty`) is a
+soft delete (`deleted_at`) that removes the property from every active query
+while preserving its data. A permanent delete is allowed only when there are
+zero dependencies and is gated by `properties:delete`; the dependency re-count
+runs inside the delete transaction so it cannot race a concurrent insert. All
+three operations are audited (`create` / `soft_delete` / `delete`).
+
 ## Where the triggers live
 
 All trigger and check-constraint SQL is in

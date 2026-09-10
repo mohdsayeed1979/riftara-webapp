@@ -10,6 +10,7 @@ import { KpiGrid, PageHeader } from '@/components/ui/page';
 import { PropertyImage } from '@/components/ui/property-image';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Pagination, Table, TableContainer, TBody, TD, TH, THead, TR } from '@/components/ui/table';
+import { PropertyActions } from '@/features/properties/property-actions';
 import { can, requirePermission } from '@/lib/auth/guard';
 import { formatCompactCurrency, formatPercent } from '@/lib/format';
 import { getRequestLocale, getRequestLocationId } from '@/lib/locale';
@@ -60,6 +61,8 @@ export default async function PropertiesPage({
   ]);
 
   const money = (value: number) => formatCompactCurrency(value, { locale });
+  const canEditProperty = can(user, 'properties:edit');
+  const canDeleteProperty = can(user, 'properties:delete');
 
   const buildHref = (targetPage: number) => {
     const query = new URLSearchParams();
@@ -214,7 +217,20 @@ export default async function PropertiesPage({
                       {property.districtName ? ` · ${property.districtName}` : ''}
                     </p>
                   </div>
-                  <StatusBadge status={property.status} />
+                  <div className="flex shrink-0 items-center gap-1">
+                    <StatusBadge status={property.status} />
+                    {canEditProperty || canDeleteProperty ? (
+                      <PropertyActions
+                        propertyId={property.id}
+                        name={property.name}
+                        code={property.code}
+                        location={`${property.cityName}${property.districtName ? `, ${property.districtName}` : ''}`}
+                        canEdit={canEditProperty}
+                        canDelete={canDeleteProperty}
+                        variant="card"
+                      />
+                    ) : null}
+                  </div>
                 </div>
 
                 <div className="mt-4 grid grid-cols-3 gap-2 border-t border-[var(--color-border-subtle)] pt-3.5">

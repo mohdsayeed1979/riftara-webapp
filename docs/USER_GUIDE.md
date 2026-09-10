@@ -36,6 +36,30 @@ inline rather than as a database error. On save you land on the new property's
 detail page; **Save & Add Another** keeps you on the form for the next entry.
 Every creation writes an entry to the audit trail.
 
+**Edit a property.** An **Edit Property** action is available on the property
+detail page and in the **Actions** menu on each property card (both require
+`properties:edit`). It reuses the same form, pre-filled with the existing values;
+buildings, units and ownership have their own workflows and are never overwritten
+by the edit. Saving writes an audit entry and refreshes the data.
+
+**Archive or delete a property.** The **Actions** menu (requires
+`properties:delete`) offers **Archive** and **Delete**. Deletion is
+dependency-aware and never destructive by default:
+
+- If the property has related records — buildings, units, contracts, invoices,
+  payments, reservations, proposals, viewings, leads, work orders, assets,
+  valuations or documents — permanent deletion is **blocked**. The dialog lists
+  the real counts and directs you to **Archive** instead, which keeps signed
+  contracts and financial records intact (BR-012/BR-013).
+- **Archive** soft-deletes the property: it is hidden from active lists, metrics
+  and search but its data is preserved and it can be restored. Archive is always
+  available and is the recommended safe action.
+- **Permanent delete** is offered only when the property has *no* dependencies,
+  and then requires typing the property name to confirm. It cannot be undone.
+
+Archive and delete both write to the audit trail (`PROPERTY_ARCHIVED` /
+`PROPERTY_DELETED`).
+
 ## Units
 Full inventory filtered by property, type, availability and status. Availability
 is **computed** by the engine (from contracts, notice, reservations, maintenance

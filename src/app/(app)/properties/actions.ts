@@ -12,11 +12,17 @@ import {
   PROPERTY_STATUS_VALUES,
   PROPERTY_USAGE_VALUES,
 } from '@/lib/properties/enums';
+import { isUuid } from '@/lib/utils';
 import {
+  archiveProperty,
   createProperty,
+  deleteProperty,
+  getPropertyDependencies,
+  getPropertyDetail,
   getPropertyFormReferenceData,
   updateProperty,
   type CreatePropertyInput,
+  type PropertyDependencies,
 } from '@/services/property-service';
 
 /** Empty / whitespace-only form values become `undefined` so `.optional()`
@@ -340,6 +346,68 @@ export async function createPropertyAction(
   } catch (error) {
     // Unique code, FK and check violations are translated to friendly messages
     // by actionFailure -> translateDatabaseError. Raw DB errors never surface.
+    return actionFailure(error);
+  }
+}
+
+/** Loads the property's dependency counts for the delete/archive dialog. */
+export async function getPropertyDependenciesAction(
+  propertyId: string,
+): Promise<ActionResult<PropertyDependencies>> {
+  try {
+    if (!isUuid(propertyId)) return { ok: false, error: { code: 'NOT_FOUND', message: 'Property not found.' } };
+    const user = await requirePermission('properties:delete');
+    const deps = await getPropertyDependencies(user.organizationId, propertyId);
+    return actionSuccess(deps);
+  } catch (error) {
+    return actionFailure(error);
+  }
+}
+
+/** Archives (soft-deletes) a property — the safe, reversible alternative. */
+export async function archivePropertyAction(propertyId: string): Promise<ActionResult<{ id: string }>> {
+  try {
+    if (!isUuid(propertyId)) return { ok: false, error: { code: 'NOT_FOUND', message: 'Property not found.' } };
+    const user = await requirePermission('properties:delete');
+    const result = await archiveProperty(user, propertyId);
+    try {
+      revalidatePath('/properties');
+      revalidatePath('/dashboard');
+    } catch {
+      /* revalidation is a cache hint, not part of the transaction */
+    }
+    return actionSuccess(result);
+  } catch (error) {
+    return actionFailure(error);
+  }
+}
+
+/**
+ * Permanently deletes a property. Requires the exact property name as a typed
+ * confirmation (defense in depth) and only succeeds when there are no dependent
+ * records — otherwise the service throws and the UI directs the user to archive.
+ */
+export async function deletePropertyAction(
+  propertyId: string,
+  confirmName: string,
+): Promise<ActionResult<{ id: string }>> {
+  try {
+    if (!isUuid(propertyId)) return { ok: false, error: { code: 'NOT_FOUND', message: 'Property not found.' } };
+    const user = await requirePermission('properties:delete');
+    const property = await getPropertyDetail(user.organizationId, propertyId);
+    if (!property) return { ok: false, error: { code: 'NOT_FOUND', message: 'Property not found.' } };
+    if (confirmName.trim() !== property.nameEn) {
+      return { ok: false, error: { code: 'VALIDATION', message: 'The typed name does not match the property name.' } };
+    }
+    const result = await deleteProperty(user, propertyId);
+    try {
+      revalidatePath('/properties');
+      revalidatePath('/dashboard');
+    } catch {
+      /* revalidation is a cache hint, not part of the transaction */
+    }
+    return actionSuccess(result);
+  } catch (error) {
     return actionFailure(error);
   }
 }
