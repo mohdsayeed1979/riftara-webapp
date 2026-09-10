@@ -13,6 +13,7 @@ import { UnitPublishControl } from '@/features/units/unit-publish-control';
 import { can, requirePermission } from '@/lib/auth/guard';
 import { formatArea, formatCurrency, formatDate } from '@/lib/format';
 import { getRequestLocale } from '@/lib/locale';
+import { EntityDocuments } from '@/features/documents/entity-documents';
 import { isUuid } from '@/lib/utils';
 import { getUnitDetail, getUnitLeaseHistory, getUnitPriceHistory } from '@/services/unit-service';
 
@@ -250,6 +251,7 @@ export default async function UnitDetailPage({ params }: { params: Promise<{ id:
           )}
         </Card>
       </div>
+      <EntityDocuments user={user} entityType="unit" entityId={id} locale={locale} />
     </div>
   );
 }

@@ -15,6 +15,7 @@ import { RecordPaymentButton } from '@/features/collections/record-payment-butto
 import { can, requirePermission } from '@/lib/auth/guard';
 import { formatCurrency, formatDate, formatDateTime } from '@/lib/format';
 import { getRequestLocale } from '@/lib/locale';
+import { EntityDocuments } from '@/features/documents/entity-documents';
 import { getTenantLedger } from '@/services/collection-service';
 import { isUuid } from '@/lib/utils';
 
@@ -242,6 +243,7 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
           ) : null}
         </div>
       </div>
+      <EntityDocuments user={user} entityType="tenant" entityId={id} locale={locale} />
     </div>
   );
 }

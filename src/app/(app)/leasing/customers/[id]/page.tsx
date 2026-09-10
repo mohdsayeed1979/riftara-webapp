@@ -20,6 +20,7 @@ import { can, requirePermission } from '@/lib/auth/guard';
 import { isUuid } from '@/lib/utils';
 import { formatCurrency, formatDate } from '@/lib/format';
 import { getRequestLocale } from '@/lib/locale';
+import { EntityDocuments } from '@/features/documents/entity-documents';
 import { getCustomer360 } from '@/services/customer-service';
 
 export const dynamic = 'force-dynamic';
@@ -257,6 +258,7 @@ export default async function Customer360Page({ params }: { params: Promise<{ id
           />
         </div>
       </div>
+      <EntityDocuments user={user} entityType="customer" entityId={id} locale={locale} />
     </div>
   );
 }

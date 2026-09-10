@@ -11,6 +11,7 @@ import { can, requirePermission } from '@/lib/auth/guard';
 import { isUuid } from '@/lib/utils';
 import { formatCurrency, formatDate, formatDateTime } from '@/lib/format';
 import { getRequestLocale } from '@/lib/locale';
+import { EntityDocuments } from '@/features/documents/entity-documents';
 import {
   calculateAssetDepreciation,
   getAsset,
@@ -293,6 +294,7 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
           </CardBody>
         )}
       </Card>
+      <EntityDocuments user={user} entityType="asset" entityId={id} locale={locale} />
     </div>
   );
 }

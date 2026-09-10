@@ -12,6 +12,7 @@ import { SignContractButton } from '@/features/contracts/sign-contract-button';
 import { can, requirePermission } from '@/lib/auth/guard';
 import { formatArea, formatCurrency, formatDate } from '@/lib/format';
 import { getRequestLocale } from '@/lib/locale';
+import { EntityDocuments } from '@/features/documents/entity-documents';
 import { getContractDetail } from '@/services/contract-service';
 import { isUuid } from '@/lib/utils';
 
@@ -184,6 +185,7 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
           </TableContainer>
         )}
       </Card>
+      <EntityDocuments user={user} entityType="contract" entityId={id} locale={locale} />
     </div>
   );
 }

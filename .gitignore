@@ -6,7 +6,9 @@ build/
 .env.local
 .env.*.local
 .data/
-storage/
+# Runtime document storage (local driver). Anchored to the repo root so it does
+# not accidentally ignore source directories such as src/lib/storage.
+/storage/
 *.tsbuildinfo
 next-env.d.ts
 .DS_Store

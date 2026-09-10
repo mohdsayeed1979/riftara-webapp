@@ -22,6 +22,7 @@ import { PropertyTabs } from '@/features/properties/property-tabs';
 import { can, requirePermission } from '@/lib/auth/guard';
 import { formatArea, formatCompactCurrency, formatDate, formatPercent } from '@/lib/format';
 import { getRequestLocale } from '@/lib/locale';
+import { EntityDocuments } from '@/features/documents/entity-documents';
 import { isUuid } from '@/lib/utils';
 import { getPropertyDetail } from '@/services/property-service';
 import { getPropertyPerformance, scopeFromSession } from '@/services/metrics-service';
@@ -274,6 +275,7 @@ export default async function PropertyDetailPage({
           </div>
         }
       />
+      <EntityDocuments user={user} entityType="property" entityId={id} locale={locale} />
     </div>
   );
 }

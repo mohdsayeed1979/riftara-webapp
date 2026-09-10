@@ -33,9 +33,23 @@ browser; everything else is server-only. **Never commit a real `.env`.**
 ## Storage
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `STORAGE_DRIVER` | local | local \| supabase \| s3 |
-| `STORAGE_LOCAL_DIR` | ./storage | |
-| `STORAGE_MAX_UPLOAD_MB` | 25 | |
+| `STORAGE_DRIVER` | local | Only `local` is implemented (Phase 11A). `s3` is planned (Phase 11B); `supabase` is not required. |
+| `STORAGE_LOCAL_DIR` | ./storage | Directory for the local filesystem driver (relative to the working dir; portable to Ubuntu). |
+| `STORAGE_MAX_UPLOAD_MB` | 25 | Maximum document upload size. |
+
+### Document storage (Phase 11A)
+Document files are written through a storage abstraction (`src/lib/storage`), never
+public URLs; downloads are streamed through the authenticated route
+`GET /api/v1/documents/[id]/download`. The `storage/` directory is git-ignored.
+
+- **Ubuntu / self-hosted:** `STORAGE_DRIVER=local` is suitable **only** when
+  `STORAGE_LOCAL_DIR` points at a **persistent disk** (or a mounted volume) that
+  survives restarts and is backed up.
+- **Vercel production:** the filesystem is **ephemeral** — local storage is **NOT**
+  persistent there and must not be used for real documents. Use an S3-compatible
+  driver (deferred to Phase 11B) when running document storage on Vercel.
+- Uploads are restricted to a business-document MIME allow-list (PDF, JPEG, PNG,
+  WEBP, Word, Excel, CSV); executables/scripts are rejected.
 
 ## Supabase (when used)
 `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
