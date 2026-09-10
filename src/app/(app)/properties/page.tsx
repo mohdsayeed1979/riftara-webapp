@@ -14,6 +14,7 @@ import { PropertyActions } from '@/features/properties/property-actions';
 import { can, requirePermission } from '@/lib/auth/guard';
 import { formatCompactCurrency, formatPercent } from '@/lib/format';
 import { getRequestLocale, getRequestLocationId } from '@/lib/locale';
+import { getMessages, interpolate } from '@/i18n';
 import {
   getPropertyFilterOptions,
   listProperties,
@@ -34,6 +35,8 @@ export default async function PropertiesPage({
   const user = await requirePermission('properties:view');
   const params = await searchParams;
   const locale = await getRequestLocale();
+  const m = getMessages(locale);
+  const t = m.properties;
   const scopedCity = await getRequestLocationId();
 
   const view = params.view === 'list' ? 'list' : 'grid';
@@ -76,29 +79,29 @@ export default async function PropertiesPage({
   return (
     <div className="flex flex-col gap-5">
       <PageHeader
-        title="Properties"
-        subtitle="Browse and manage all properties across your portfolio."
+        title={t.title}
+        subtitle={t.subtitle}
         actions={
           <>
             {can(user, 'properties:export') ? (
               <Button variant="secondary" asChild>
                 <a href={`/api/v1/properties/export?${new URLSearchParams(params as Record<string, string>).toString()}`}>
                   <Download />
-                  Export
+                  {m.common.export}
                 </a>
               </Button>
             ) : null}
             <Button variant="secondary" asChild>
               <Link href="/properties/map">
                 <MapPin />
-                Map View
+                {t.mapView}
               </Link>
             </Button>
             {can(user, 'properties:create') ? (
               <Button asChild>
                 <Link href="/properties/new">
                   <Plus />
-                  Add Property
+                  {t.addProperty}
                 </Link>
               </Button>
             ) : null}
@@ -108,40 +111,40 @@ export default async function PropertiesPage({
 
       <KpiGrid columns={5}>
         <KpiCard
-          label="Total Properties"
+          label={t.totalProperties}
           value={summary.propertyCount.toLocaleString()}
-          caption={`Across ${options.cities.length} cities`}
+          caption={interpolate(m.dashboard.acrossProjects, { count: options.cities.length })}
           icon={<Building2 />}
           tone="neutral"
         />
         <KpiCard
-          label="Occupied Units"
+          label={t.occupiedUnits}
           value={summary.occupiedUnits.toLocaleString()}
-          caption={`${formatPercent(summary.occupancyRate, { locale })} occupancy`}
+          caption={`${formatPercent(summary.occupancyRate, { locale })} ${m.dashboard.occupancyRate}`}
           tone="success"
           ringValue={summary.occupancyRate}
           href="/units?availability=leased"
         />
         <KpiCard
-          label="Vacant Units"
+          label={t.vacantUnits}
           value={summary.availableUnits.toLocaleString()}
-          caption={`${formatPercent(summary.vacancyRate, { locale })} vacancy`}
+          caption={`${formatPercent(summary.vacancyRate, { locale })} ${m.dashboard.vacancyRate}`}
           icon={<KeyRound />}
           tone="warning"
           higherIsBetter={false}
           href="/units?availability=available"
         />
         <KpiCard
-          label="Annual Rental Value"
+          label={m.dashboard.annualRentalValue}
           value={money(summary.annualRentalValue)}
-          caption="At full occupancy"
+          caption={m.dashboard.readyForLease}
           tone="gold"
           href="/units"
         />
         <KpiCard
-          label="Total Units"
+          label={m.dashboard.totalUnits}
           value={summary.totalUnits.toLocaleString()}
-          caption="Across all properties"
+          caption={t.subtitle}
           icon={<Building2 />}
           tone="info"
           href="/units"
@@ -149,27 +152,27 @@ export default async function PropertiesPage({
       </KpiGrid>
 
       <FilterBar
-        searchPlaceholder="Search properties, locations, or keywords..."
+        searchPlaceholder={t.searchPlaceholder}
         view={{ current: view }}
         filters={[
           {
             key: 'cityId',
-            placeholder: 'All Cities',
+            placeholder: t.allCities,
             options: options.cities.map((city) => ({ value: city.id, label: city.name })),
           },
           {
             key: 'typeId',
-            placeholder: 'All Types',
+            placeholder: t.allTypes,
             options: options.types.map((type) => ({ value: type.id, label: type.name })),
           },
           {
             key: 'status',
-            placeholder: 'All Statuses',
+            placeholder: t.allStatuses,
             options: [
-              { value: 'active', label: 'Active' },
-              { value: 'under_construction', label: 'Under Construction' },
-              { value: 'under_renovation', label: 'Under Renovation' },
-              { value: 'inactive', label: 'Inactive' },
+              { value: 'active', label: m.common.statuses.active },
+              { value: 'under_construction', label: m.common.statuses.under_construction },
+              { value: 'under_renovation', label: m.common.statuses.under_renovation },
+              { value: 'inactive', label: m.common.statuses.inactive },
             ],
           },
         ]}
@@ -179,14 +182,14 @@ export default async function PropertiesPage({
         <Card>
           <EmptyState
             icon={<Building2 />}
-            title="No properties found"
-            description="Try adjusting your filters or add a new property to your portfolio."
+            title={t.noResultsTitle}
+            description={t.noResultsHint}
             action={
               can(user, 'properties:create') ? (
                 <Button asChild>
                   <Link href="/properties/new">
                     <Plus />
-                    Add Property
+                    {t.addProperty}
                   </Link>
                 </Button>
               ) : undefined
@@ -234,15 +237,15 @@ export default async function PropertiesPage({
                 </div>
 
                 <div className="mt-4 grid grid-cols-3 gap-2 border-t border-[var(--color-border-subtle)] pt-3.5">
-                  <Figure label="Total Units" value={String(property.totalUnits)} />
+                  <Figure label={t.totalUnitsCol} value={String(property.totalUnits)} />
                   <Figure
-                    label="Occupied"
+                    label={t.occupiedCol}
                     value={String(property.occupiedUnits)}
                     tone="success"
                   />
                   <div className="flex flex-col items-center">
                     <ProgressRing value={property.occupancyRate} size={40} strokeWidth={4} />
-                    <span className="mt-1 text-[10.5px] text-[var(--color-text-tertiary)]">Occupancy</span>
+                    <span className="mt-1 text-[10.5px] text-[var(--color-text-tertiary)]">{t.occupancy}</span>
                   </div>
                 </div>
 
@@ -254,7 +257,7 @@ export default async function PropertiesPage({
                     href={`/properties/${property.id}`}
                     className="inline-flex items-center gap-1 text-[12px] font-medium text-[var(--color-info)] hover:underline"
                   >
-                    View details
+                    {m.common.viewDetails}
                     <ArrowRight className="size-3.5 rtl-flip" aria-hidden />
                   </Link>
                 </div>
@@ -269,15 +272,15 @@ export default async function PropertiesPage({
               <THead>
                 <TR>
                   <TH className="w-10">#</TH>
-                  <TH>Property Name</TH>
-                  <TH>City</TH>
-                  <TH>Type</TH>
-                  <TH alignment="end">Total Units</TH>
-                  <TH alignment="end">Occupied</TH>
-                  <TH alignment="end">Available</TH>
-                  <TH alignment="end">Occupancy</TH>
-                  <TH alignment="end">Annual Rental Value</TH>
-                  <TH alignment="center">Status</TH>
+                  <TH>{t.propertyName}</TH>
+                  <TH>{t.city}</TH>
+                  <TH>{t.propertyType}</TH>
+                  <TH alignment="end">{t.totalUnitsCol}</TH>
+                  <TH alignment="end">{t.occupiedCol}</TH>
+                  <TH alignment="end">{t.availableCol}</TH>
+                  <TH alignment="end">{t.occupancy}</TH>
+                  <TH alignment="end">{t.annualRentalValueCol}</TH>
+                  <TH alignment="center">{m.common.status}</TH>
                 </TR>
               </THead>
               <TBody>

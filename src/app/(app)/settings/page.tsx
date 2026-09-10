@@ -19,6 +19,8 @@ import { PageHeader, SectionTitle } from '@/components/ui/page';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/misc';
 import { Table, TableContainer, TBody, TD, TH, THead, TR } from '@/components/ui/table';
 import { requirePermission } from '@/lib/auth/guard';
+import { getRequestLocale } from '@/lib/locale';
+import { getMessages, interpolate } from '@/i18n';
 
 export const metadata: Metadata = { title: 'Settings' };
 export const dynamic = 'force-dynamic';
@@ -27,6 +29,9 @@ export default async function SettingsPage() {
   const user = await requirePermission('settings:view');
   const db = await getDb();
   const orgId = user.organizationId;
+  const locale = await getRequestLocale();
+  const m = getMessages(locale);
+  const t = m.settings;
 
   const [settingRows, rules, propertyTypeRows, unitTypeRows, unitStatusRows, leadSourceRows, leadStageRows, expenseRows, maintenanceRows, documentRows] =
     await Promise.all([
@@ -50,37 +55,37 @@ export default async function SettingsPage() {
   }
 
   function renderValue(value: unknown, valueType: string): string {
-    if (valueType === 'boolean') return value ? 'Enabled' : 'Disabled';
+    if (valueType === 'boolean') return value ? t.enabled : t.disabled;
     if (valueType === 'percent') return `${value}%`;
-    if (valueType === 'duration_days') return `${value} days`;
-    if (valueType === 'duration_minutes') return `${value} minutes`;
-    if (typeof value === 'object') return Array.isArray(value) ? `${value.length} items` : 'Configured';
+    if (valueType === 'duration_days') return interpolate(t.days, { count: String(value) });
+    if (valueType === 'duration_minutes') return interpolate(t.minutes, { count: String(value) });
+    if (typeof value === 'object') return Array.isArray(value) ? interpolate(t.items, { count: value.length }) : t.configured;
     return String(value);
   }
 
   return (
     <div className="flex flex-col gap-5">
       <PageHeader
-        title="Settings"
-        subtitle="Configure business rules, taxonomies and system preferences. Values here drive platform behaviour without code changes."
+        title={t.title}
+        subtitle={t.subtitleLong}
       />
 
       <Tabs defaultValue="rules">
         <TabsList>
-          <TabsTrigger value="rules">Business Rules</TabsTrigger>
-          <TabsTrigger value="config">Configuration</TabsTrigger>
-          <TabsTrigger value="taxonomies">Taxonomies</TabsTrigger>
-          <TabsTrigger value="statuses">Unit Statuses</TabsTrigger>
-          <TabsTrigger value="pipeline">Lead Pipeline</TabsTrigger>
+          <TabsTrigger value="rules">{t.businessRules}</TabsTrigger>
+          <TabsTrigger value="config">{t.tabConfig}</TabsTrigger>
+          <TabsTrigger value="taxonomies">{t.taxonomies}</TabsTrigger>
+          <TabsTrigger value="statuses">{t.tabStatuses}</TabsTrigger>
+          <TabsTrigger value="pipeline">{t.tabPipeline}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="rules">
           <Card>
-            <CardHeader title="Core Business Rules" description="The BRD business rules and their enforcement status." />
+            <CardHeader title={t.coreBusinessRules} description={t.coreBusinessRulesDesc} />
             <TableContainer>
               <Table>
                 <THead>
-                  <TR><TH>Rule</TH><TH>Description</TH><TH alignment="center">Enforcement</TH><TH alignment="center">Status</TH></TR>
+                  <TR><TH>{t.ruleCol}</TH><TH>{t.descriptionCol}</TH><TH alignment="center">{t.enforcementCol}</TH><TH alignment="center">{m.common.status}</TH></TR>
                 </THead>
                 <TBody>
                   {rules.map((rule) => (
@@ -93,7 +98,7 @@ export default async function SettingsPage() {
                         </Badge>
                       </TD>
                       <TD alignment="center">
-                        <Badge tone={rule.isEnabled ? 'success' : 'neutral'} dot>{rule.isEnabled ? 'Active' : 'Off'}</Badge>
+                        <Badge tone={rule.isEnabled ? 'success' : 'neutral'} dot>{rule.isEnabled ? m.common.statuses.active : t.off}</Badge>
                       </TD>
                     </TR>
                   ))}
@@ -114,7 +119,7 @@ export default async function SettingsPage() {
                   <TableContainer>
                     <Table>
                       <THead>
-                        <TR><TH>Setting</TH><TH>Description</TH><TH alignment="end">Value</TH></TR>
+                        <TR><TH>{t.settingCol}</TH><TH>{t.descriptionCol}</TH><TH alignment="end">{t.valueCol}</TH></TR>
                       </THead>
                       <TBody>
                         {rows.map((row) => (
@@ -135,28 +140,28 @@ export default async function SettingsPage() {
 
         <TabsContent value="taxonomies">
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <TaxonomyCard title="Property Types" items={propertyTypeRows.map((t) => t.nameEn)} />
-            <TaxonomyCard title="Unit Types" items={unitTypeRows.map((t) => t.nameEn)} />
-            <TaxonomyCard title="Lead Sources" items={leadSourceRows.map((t) => t.nameEn)} />
-            <TaxonomyCard title="Expense Categories" items={expenseRows.map((t) => t.nameEn)} />
-            <TaxonomyCard title="Maintenance Categories" items={maintenanceRows.map((t) => t.nameEn)} />
-            <TaxonomyCard title="Document Categories" items={documentRows.map((t) => t.nameEn)} />
+            <TaxonomyCard title={t.propertyTypes} items={taxonomyNames(propertyTypeRows, locale)} />
+            <TaxonomyCard title={t.unitTypesTax} items={taxonomyNames(unitTypeRows, locale)} />
+            <TaxonomyCard title={t.leadSources} items={taxonomyNames(leadSourceRows, locale)} />
+            <TaxonomyCard title={t.expenseCategories} items={taxonomyNames(expenseRows, locale)} />
+            <TaxonomyCard title={t.maintenanceCategories} items={taxonomyNames(maintenanceRows, locale)} />
+            <TaxonomyCard title={t.documentCategories} items={taxonomyNames(documentRows, locale)} />
           </div>
         </TabsContent>
 
         <TabsContent value="statuses">
           <Card>
-            <CardHeader title="Unit Statuses" description="Configurable statuses drive the availability engine and website publishing rules." />
+            <CardHeader title={t.unitStatusesTitle} description={t.unitStatusesDesc} />
             <TableContainer>
               <Table>
                 <THead>
-                  <TR><TH>Status</TH><TH>Availability Class</TH><TH alignment="center">Publishable</TH><TH alignment="center">Counts as Occupied</TH><TH alignment="center">Blocks Leasing</TH></TR>
+                  <TR><TH>{m.common.status}</TH><TH>{t.availabilityClassCol}</TH><TH alignment="center">{t.publishableCol}</TH><TH alignment="center">{t.occupiedCol}</TH><TH alignment="center">{t.blocksLeasingCol}</TH></TR>
                 </THead>
                 <TBody>
                   {unitStatusRows.map((status) => (
                     <TR key={status.id}>
-                      <TD className="font-medium">{status.nameEn}</TD>
-                      <TD><Badge tone={status.availabilityClass === 'available' ? 'success' : status.availabilityClass === 'leased' ? 'info' : status.availabilityClass === 'reserved' ? 'warning' : 'neutral'}>{status.availabilityClass}</Badge></TD>
+                      <TD className="font-medium">{locale === 'ar' && status.nameAr ? status.nameAr : status.nameEn}</TD>
+                      <TD><Badge tone={status.availabilityClass === 'available' ? 'success' : status.availabilityClass === 'leased' ? 'info' : status.availabilityClass === 'reserved' ? 'warning' : 'neutral'}>{(m.common.statuses as Record<string,string>)[status.availabilityClass] ?? status.availabilityClass}</Badge></TD>
                       <TD alignment="center">{status.publishable ? '✓' : '—'}</TD>
                       <TD alignment="center">{status.countsAsOccupied ? '✓' : '—'}</TD>
                       <TD alignment="center">{status.blocksLeasing ? '✓' : '—'}</TD>
@@ -170,20 +175,20 @@ export default async function SettingsPage() {
 
         <TabsContent value="pipeline">
           <Card>
-            <CardHeader title="Lead Pipeline Stages" description="The configurable leasing pipeline (BRD 19)." />
+            <CardHeader title={t.leadPipelineTitle} description={t.leadPipelineDesc} />
             <TableContainer>
               <Table>
                 <THead>
-                  <TR><TH>#</TH><TH>Stage</TH><TH alignment="center">Type</TH><TH alignment="end">Probability</TH><TH alignment="center">Loss Reason</TH></TR>
+                  <TR><TH>#</TH><TH>{t.stageCol}</TH><TH alignment="center">{t.typeCol}</TH><TH alignment="end">{t.probabilityCol}</TH><TH alignment="center">{t.lossReasonCol}</TH></TR>
                 </THead>
                 <TBody>
                   {leadStageRows.map((stage) => (
                     <TR key={stage.id}>
                       <TD className="text-[var(--color-text-tertiary)]">{stage.pipelineOrder + 1}</TD>
-                      <TD className="font-medium">{stage.nameEn}</TD>
+                      <TD className="font-medium">{locale === 'ar' && stage.nameAr ? stage.nameAr : stage.nameEn}</TD>
                       <TD alignment="center"><Badge tone={stage.stageType === 'won' ? 'success' : stage.stageType === 'lost' ? 'error' : 'info'}>{stage.stageType}</Badge></TD>
                       <TD alignment="end" numeric>{stage.probability}%</TD>
-                      <TD alignment="center">{stage.requiresLossReason ? 'Required' : '—'}</TD>
+                      <TD alignment="center">{stage.requiresLossReason ? t.required : '—'}</TD>
                     </TR>
                   ))}
                 </TBody>
@@ -194,6 +199,11 @@ export default async function SettingsPage() {
       </Tabs>
     </div>
   );
+}
+
+/** Localizes DB taxonomy display names: Arabic name when available, else English. */
+function taxonomyNames(rows: Array<{ nameEn: string; nameAr: string | null }>, locale: 'en' | 'ar'): string[] {
+  return rows.map((r) => (locale === 'ar' && r.nameAr ? r.nameAr : r.nameEn));
 }
 
 function TaxonomyCard({ title, items }: { title: string; items: string[] }) {

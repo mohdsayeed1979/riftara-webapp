@@ -8,6 +8,7 @@ import { DonutChart, DonutLegend, TrendAreaChart, type DonutSlice } from '@/comp
 import { SaudiPortfolioMap, type MapMarker } from '@/components/charts/saudi-map';
 import type { CityBreakdownRow, StatusBreakdownRow, TrendPoint } from '@/services/metrics-service';
 import { formatCompactCurrency, formatPercent } from '@/lib/format';
+import { getMessages } from '@/i18n';
 import type { Locale } from '@/i18n/config';
 
 const STATUS_COLOR: Record<string, string> = {
@@ -46,6 +47,7 @@ export function DashboardCharts({
   periodLabel: string;
   locale: Locale;
 }) {
+  const d = getMessages(locale).dashboard;
   const occupancySeries = trend.map((point) => ({
     label: point.label,
     Occupied: point.occupancyRate,
@@ -84,13 +86,13 @@ export function DashboardCharts({
     <>
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.4fr_1fr_0.9fr]">
         <Card>
-          <CardHeader title="Occupancy Trend" description={periodLabel} />
+          <CardHeader title={d.occupancyTrend} description={periodLabel} />
           <CardBody className="pt-0">
             <TrendAreaChart
               data={occupancySeries}
               series={[
-                { key: 'Occupied', label: 'Occupied', color: 'var(--color-espresso-800)' },
-                { key: 'Vacant', label: 'Vacant', color: 'var(--color-border-strong)' },
+                { key: 'Occupied', label: d.occupied, color: 'var(--color-espresso-800)' },
+                { key: 'Vacant', label: d.vacant, color: 'var(--color-border-strong)' },
               ]}
               height={252}
               domain={[0, 100]}
@@ -102,7 +104,7 @@ export function DashboardCharts({
 
         <Card>
           <CardHeader
-            title="Unit Status Overview"
+            title={d.unitStatusOverview}
             action={
               <Link
                 href="/units"
@@ -118,7 +120,7 @@ export function DashboardCharts({
               <DonutChart
                 data={donutData}
                 centerValue={totalUnits.toLocaleString()}
-                centerLabel="Total Units"
+                centerLabel={d.totalUnits}
                 height={188}
               />
               <div className="w-full min-w-0 flex-1">
@@ -129,42 +131,42 @@ export function DashboardCharts({
         </Card>
 
         <Card>
-          <CardHeader title="Portfolio Value" />
+          <CardHeader title={d.portfolioValueTrend} />
           <CardBody className="pt-0">
             <p className="text-[24px] font-semibold leading-8 text-[var(--color-text-primary)] tabular">
               {money(summary.marketValue)}
             </p>
             <p className="mb-2 text-[11.5px] text-[var(--color-text-secondary)]">
-              Current approved market valuation
+              {d.marketValuation}
             </p>
             <MetricRow
-              label="Book Value"
+              label={d.bookValue}
               value={money(summary.bookValue)}
               href="/financials/valuations"
             />
             <MetricRow
-              label="Annual Rental Value"
+              label={d.annualRentalValue}
               value={money(summary.annualRentalValue)}
               href="/units"
             />
             <MetricRow
-              label="Contracted Revenue"
+              label={d.contractedRevenue}
               value={money(summary.contractedRevenue)}
               href="/contracts"
             />
             <MetricRow
-              label="Collected Revenue"
+              label={d.collectedRevenue}
               value={money(summary.collectedRevenue)}
               href="/collections"
             />
             <MetricRow
-              label="Outstanding"
+              label={d.outstanding}
               value={money(summary.outstanding)}
               tone={summary.outstanding > 0 ? 'warning' : 'default'}
               href="/collections?status=overdue"
             />
             <MetricRow
-              label="Collection Rate"
+              label={d.collectionRate}
               value={formatPercent(summary.collectionRate, { locale })}
               tone={summary.collectionRate >= 95 ? 'success' : 'warning'}
               href="/collections"
@@ -175,13 +177,13 @@ export function DashboardCharts({
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.6fr_1fr]">
         <Card>
-          <CardHeader title="Collection Trend" description={`Billed against collected — ${periodLabel}`} />
+          <CardHeader title={d.collectionTrend} description={periodLabel} />
           <CardBody className="pt-0">
             <TrendAreaChart
               data={collectionSeries}
               series={[
-                { key: 'Billed', label: 'Billed', color: 'var(--color-chart-3)' },
-                { key: 'Collected', label: 'Collected', color: 'var(--color-chart-1)' },
+                { key: 'Billed', label: d.billed, color: 'var(--color-chart-3)' },
+                { key: 'Collected', label: d.collected, color: 'var(--color-chart-1)' },
               ]}
               height={240}
               yTickFormatter={(value) => formatCompactCurrency(value, { locale }).replace('SAR ', '')}
@@ -191,7 +193,7 @@ export function DashboardCharts({
         </Card>
 
         <Card>
-          <CardHeader title="Units by City" description="Portfolio distribution" />
+          <CardHeader title={d.unitsByCity} />
           <CardBody className="pt-0">
             <SaudiPortfolioMap markers={markers} />
           </CardBody>

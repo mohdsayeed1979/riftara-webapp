@@ -9,7 +9,8 @@ import { getDb } from '@/db/client';
 import { cities, notifications, properties, valuations } from '@/db/schema';
 import { getSession } from '@/lib/auth/session';
 import { formatCompactCurrency, formatDelta } from '@/lib/format';
-import { getRequestLocationId } from '@/lib/locale';
+import { getRequestLocale, getRequestLocationId } from '@/lib/locale';
+import { getMessages } from '@/i18n';
 
 export const dynamic = 'force-dynamic';
 
@@ -118,12 +119,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const allowedPropertyIds = user.scopedPropertyIds.length > 0 ? user.scopedPropertyIds : null;
   const allowedCityIds = user.scopedCityIds.length > 0 ? user.scopedCityIds : null;
 
-  const [notificationData, sidebarSummary, locations, activeLocationId] = await Promise.all([
+  const [notificationData, sidebarSummary, locations, activeLocationId, locale] = await Promise.all([
     loadNotifications(user.organizationId, user.id, user.permissions),
     loadSidebarSummary(user.organizationId, allowedPropertyIds),
     loadLocations(user.organizationId, allowedCityIds),
     getRequestLocationId(),
+    getRequestLocale(),
   ]);
+  const demo = getMessages(locale).common;
 
   return (
     <AppShell
@@ -140,20 +143,19 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       unreadCount={notificationData.unread}
       sidebarSummary={sidebarSummary}
       demoMode={env.DEMO_MODE}
-      demoBanner={<DemoBanner />}
+      demoBanner={<DemoBanner title={demo.demoBannerTitle} body={demo.demoBannerBody} />}
     >
       {children}
     </AppShell>
   );
 }
 
-function DemoBanner() {
+function DemoBanner({ title, body }: { title: string; body: string }) {
   return (
     <div className="no-print flex items-start gap-2.5 border-b border-[var(--color-gold-200)] bg-[var(--color-gold-50)] px-4 py-2 lg:px-6">
       <Info className="mt-0.5 size-3.5 shrink-0 text-[var(--color-gold-600)]" aria-hidden />
       <p className="text-[11.5px] leading-4 text-[var(--color-gold-800)]">
-        <span className="font-semibold">Demonstration environment.</span> All records are seeded demo
-        data. Integrations are not connected and payments are not real financial transactions.
+        <span className="font-semibold">{title}.</span> {body}
       </p>
     </div>
   );

@@ -14,6 +14,7 @@ import { GeneratePmWorkOrderButton, RunSlaScanButton } from '@/features/maintena
 import { can, requirePermission } from '@/lib/auth/guard';
 import { formatCompactCurrency, formatDate, formatPercent } from '@/lib/format';
 import { getRequestLocale, getRequestLocationId } from '@/lib/locale';
+import { getMessages, interpolate, type Messages } from '@/i18n';
 import {
   getUpcomingPreventiveMaintenance,
   getVendorPerformance,
@@ -44,6 +45,8 @@ export default async function MaintenancePage({
   const user = await requirePermission('maintenance:view');
   const params = await searchParams;
   const locale = await getRequestLocale();
+  const m = getMessages(locale);
+  const t = m.maintenance;
   const cityId = await getRequestLocationId();
   const page = Math.max(1, Number(params.page) || 1);
   const allowedPropertyIds = user.scopedPropertyIds.length ? user.scopedPropertyIds : null;
@@ -76,12 +79,13 @@ export default async function MaintenancePage({
     Completed: point.workOrdersCompleted,
   }));
 
+  const st = m.common.statuses;
   const statusDonut = [
-    { label: 'Open', value: summary.open, color: STATUS_COLOR.open, href: '/maintenance?status=open' },
-    { label: 'Assigned', value: summary.assigned, color: STATUS_COLOR.assigned, href: '/maintenance?status=assigned' },
-    { label: 'In Progress', value: summary.inProgress, color: STATUS_COLOR.in_progress, href: '/maintenance?status=in_progress' },
-    { label: 'Pending', value: summary.pending, color: STATUS_COLOR.pending, href: '/maintenance?status=pending' },
-    { label: 'Completed', value: summary.completed, color: STATUS_COLOR.completed, href: '/maintenance?status=completed' },
+    { label: st.open, value: summary.open, color: STATUS_COLOR.open, href: '/maintenance?status=open' },
+    { label: st.assigned, value: summary.assigned, color: STATUS_COLOR.assigned, href: '/maintenance?status=assigned' },
+    { label: st.in_progress, value: summary.inProgress, color: STATUS_COLOR.in_progress, href: '/maintenance?status=in_progress' },
+    { label: st.pending, value: summary.pending, color: STATUS_COLOR.pending, href: '/maintenance?status=pending' },
+    { label: st.completed, value: summary.completed, color: STATUS_COLOR.completed, href: '/maintenance?status=completed' },
   ].filter((slice) => slice.value > 0);
 
   const buildHref = (targetPage: number) => {
@@ -96,14 +100,14 @@ export default async function MaintenancePage({
   return (
     <div className="flex flex-col gap-5">
       <PageHeader
-        title="Maintenance Operations"
-        subtitle="Manage work orders, track SLA performance and oversee preventive maintenance."
+        title={t.title}
+        subtitle={t.subtitle}
         actions={
           <>
             {can(user, 'maintenance:edit') ? <RunSlaScanButton /> : null}
             {can(user, 'maintenance:create') ? (
               <Button asChild>
-                <Link href="/maintenance/new"><Plus />Create Work Order</Link>
+                <Link href="/maintenance/new"><Plus />{t.createWorkOrder}</Link>
               </Button>
             ) : null}
           </>
@@ -111,17 +115,17 @@ export default async function MaintenancePage({
       />
 
       <KpiGrid columns={6}>
-        <KpiCard label="Total Work Orders" value={summary.total.toLocaleString()} caption="This period" icon={<ClipboardList />} tone="neutral" />
-        <KpiCard label="Open" value={String(summary.open + summary.assigned + summary.inProgress)} caption="In progress" icon={<Clock />} tone="warning" higherIsBetter={false} href="/maintenance?status=open" />
-        <KpiCard label="Completed" value={String(summary.completed)} caption="This period" icon={<CheckCircle2 />} tone="success" />
-        <KpiCard label="Avg Resolution" value={`${summary.averageResolutionDays} days`} icon={<Timer />} tone="info" higherIsBetter={false} />
-        <KpiCard label="SLA Compliance" value={formatPercent(summary.slaCompliance, { locale })} caption="Within target" icon={<CheckCircle2 />} tone={summary.slaCompliance >= 95 ? 'success' : 'warning'} ringValue={summary.slaCompliance} />
-        <KpiCard label="Total Costs" value={money(summary.totalCost)} caption="This period" icon={<Banknote />} tone="neutral" higherIsBetter={false} href="/financials/expenses" />
+        <KpiCard label={t.totalWorkOrders} value={summary.total.toLocaleString()} caption={t.thisPeriod} icon={<ClipboardList />} tone="neutral" />
+        <KpiCard label={t.open} value={String(summary.open + summary.assigned + summary.inProgress)} caption={t.inProgressCaption} icon={<Clock />} tone="warning" higherIsBetter={false} href="/maintenance?status=open" />
+        <KpiCard label={t.completed} value={String(summary.completed)} caption={t.thisPeriod} icon={<CheckCircle2 />} tone="success" />
+        <KpiCard label={t.avgResolution} value={interpolate(t.days, { count: summary.averageResolutionDays })} icon={<Timer />} tone="info" higherIsBetter={false} />
+        <KpiCard label={t.slaCompliance} value={formatPercent(summary.slaCompliance, { locale })} caption={t.withinTarget} icon={<CheckCircle2 />} tone={summary.slaCompliance >= 95 ? 'success' : 'warning'} ringValue={summary.slaCompliance} />
+        <KpiCard label={t.totalCosts} value={money(summary.totalCost)} caption={t.thisPeriod} icon={<Banknote />} tone="neutral" higherIsBetter={false} href="/financials/expenses" />
       </KpiGrid>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.3fr_1fr_1.1fr]">
         <Card>
-          <CardHeader title="Work Order Trend" description="Created against completed" />
+          <CardHeader title={t.workOrderTrend} description={t.createdVsCompleted} />
           <CardBody className="pt-0">
             <ColumnChart
               data={trendData}
@@ -135,10 +139,10 @@ export default async function MaintenancePage({
         </Card>
 
         <Card>
-          <CardHeader title="Work Order Status" />
+          <CardHeader title={t.workOrderStatus} />
           <CardBody className="pt-0">
             <div className="flex flex-col items-center gap-4 sm:flex-row">
-              <DonutChart data={statusDonut} centerValue={String(summary.total)} centerLabel="Total WOs" height={180} />
+              <DonutChart data={statusDonut} centerValue={String(summary.total)} centerLabel={t.totalWOs} height={180} />
               <div className="w-full flex-1">
                 <DonutLegend data={statusDonut} total={summary.total} />
               </div>
@@ -147,14 +151,14 @@ export default async function MaintenancePage({
         </Card>
 
         <Card>
-          <CardHeader title="Vendor Performance" />
+          <CardHeader title={t.vendorPerformance} />
           {vendors.length === 0 ? (
-            <EmptyState title="No vendors" />
+            <EmptyState title={t.noVendors} />
           ) : (
             <TableContainer>
               <Table>
                 <THead>
-                  <TR><TH>Vendor</TH><TH alignment="end">WOs</TH><TH alignment="end">SLA</TH><TH alignment="end">Rating</TH></TR>
+                  <TR><TH>{t.vendor}</TH><TH alignment="end">{t.wosCol}</TH><TH alignment="end">{t.slaCol}</TH><TH alignment="end">{t.ratingCol}</TH></TR>
                 </THead>
                 <TBody>
                   {vendors.map((vendor) => (
@@ -179,14 +183,14 @@ export default async function MaintenancePage({
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <Card>
-          <CardHeader title="Upcoming Preventive Maintenance" />
+          <CardHeader title={t.upcomingPM} />
           {preventive.length === 0 ? (
-            <EmptyState title="No scheduled maintenance" />
+            <EmptyState title={t.noScheduledPM} />
           ) : (
             <TableContainer>
               <Table>
                 <THead>
-                  <TR><TH>#</TH><TH>Property</TH><TH>Type</TH><TH alignment="end">Scheduled</TH><TH alignment="center">Status</TH>{can(user, 'maintenance:create') ? <TH alignment="end">Action</TH> : null}</TR>
+                  <TR><TH>#</TH><TH>{m.properties.property}</TH><TH>{m.units.unitType}</TH><TH alignment="end">{t.scheduledCol}</TH><TH alignment="center">{m.common.status}</TH>{can(user, 'maintenance:create') ? <TH alignment="end">{t.actionCol}</TH> : null}</TR>
                 </THead>
                 <TBody>
                   {preventive.map((schedule, index) => (
@@ -206,16 +210,16 @@ export default async function MaintenancePage({
         </Card>
 
         <Card>
-          <CardHeader title="Recent Work Orders" />
-          <FilterBarWrapper />
+          <CardHeader title={t.recentWorkOrders} />
+          <FilterBarWrapper t={t} st={st} />
           {workOrders.items.length === 0 ? (
-            <EmptyState icon={<Wrench />} title="No work orders found" />
+            <EmptyState icon={<Wrench />} title={t.noWorkOrdersFound} />
           ) : (
             <>
               <TableContainer>
                 <Table>
                   <THead>
-                    <TR><TH>#</TH><TH>Title</TH><TH>Property</TH><TH alignment="center">Priority</TH><TH alignment="center">Status</TH></TR>
+                    <TR><TH>#</TH><TH>{t.titleCol}</TH><TH>{m.properties.property}</TH><TH alignment="center">{t.priority}</TH><TH alignment="center">{m.common.status}</TH></TR>
                   </THead>
                   <TBody>
                     {workOrders.items.map((workOrder) => (
@@ -243,31 +247,31 @@ export default async function MaintenancePage({
   );
 }
 
-function FilterBarWrapper() {
+function FilterBarWrapper({ t, st }: { t: Messages['maintenance']; st: Messages['common']['statuses'] }) {
   return (
     <div className="px-5 pb-3">
       <FilterBar
-        searchPlaceholder="Search work orders..."
+        searchPlaceholder={t.searchPlaceholder}
         filters={[
           {
             key: 'status',
-            placeholder: 'All Statuses',
+            placeholder: t.allStatuses,
             options: [
-              { value: 'open', label: 'Open' },
-              { value: 'assigned', label: 'Assigned' },
-              { value: 'in_progress', label: 'In Progress' },
-              { value: 'pending', label: 'Pending' },
-              { value: 'completed', label: 'Completed' },
+              { value: 'open', label: st.open },
+              { value: 'assigned', label: st.assigned },
+              { value: 'in_progress', label: st.in_progress },
+              { value: 'pending', label: st.pending },
+              { value: 'completed', label: st.completed },
             ],
           },
           {
             key: 'priority',
-            placeholder: 'All Priorities',
+            placeholder: t.allPriorities,
             options: [
-              { value: 'critical', label: 'Critical' },
-              { value: 'high', label: 'High' },
-              { value: 'medium', label: 'Medium' },
-              { value: 'low', label: 'Low' },
+              { value: 'critical', label: st.critical },
+              { value: 'high', label: st.high },
+              { value: 'medium', label: st.medium },
+              { value: 'low', label: st.low },
             ],
           },
         ]}

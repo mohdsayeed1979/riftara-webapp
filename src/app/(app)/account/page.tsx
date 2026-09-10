@@ -6,6 +6,8 @@ import { DetailList, DetailRow, PageHeader } from '@/components/ui/page';
 import { requireUser } from '@/lib/auth/guard';
 import { MfaPanel } from '@/features/account/mfa-panel';
 import { getMfaStatus } from '@/services/mfa-service';
+import { getRequestLocale } from '@/lib/locale';
+import { getMessages, interpolate } from '@/i18n';
 
 export const metadata: Metadata = { title: 'My Account' };
 export const dynamic = 'force-dynamic';
@@ -13,10 +15,13 @@ export const dynamic = 'force-dynamic';
 export default async function AccountPage() {
   const user = await requireUser();
   const mfaStatus = await getMfaStatus(user.id);
+  const locale = await getRequestLocale();
+  const m = getMessages(locale);
+  const t = m.account;
 
   return (
     <div className="flex flex-col gap-5">
-      <PageHeader title="My Account" subtitle="Your profile, roles and access." />
+      <PageHeader title={t.title} subtitle={t.subtitle} />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[320px_1fr]">
         <Card>
@@ -35,19 +40,19 @@ export default async function AccountPage() {
 
         <div className="flex flex-col gap-4">
           <Card>
-            <CardHeader title="Access" />
+            <CardHeader title={t.access} />
             <CardBody className="pt-0">
               <DetailList>
-                <DetailRow label="Roles" value={user.roleNames.join(', ') || '—'} />
-                <DetailRow label="Permissions" value={`${user.permissions.length} granted`} />
-                <DetailRow label="Data Scope" value={user.scopedPropertyIds.length || user.scopedCityIds.length ? 'Scoped' : 'Organization-wide'} />
-                <DetailRow label="Locale" value={user.locale === 'ar' ? 'Arabic' : 'English'} />
+                <DetailRow label={t.roles} value={user.roleNames.join(', ') || '—'} />
+                <DetailRow label={m.users.permissions} value={interpolate(t.permissionsGranted, { count: user.permissions.length })} />
+                <DetailRow label={t.dataScope} value={user.scopedPropertyIds.length || user.scopedCityIds.length ? t.scoped : t.organizationWide} />
+                <DetailRow label={t.locale} value={user.locale === 'ar' ? 'العربية' : 'English'} />
               </DetailList>
             </CardBody>
           </Card>
 
           <Card>
-            <CardHeader title="Security" description="Sign-in attempts are monitored and logged. Contact your administrator to reset your password." />
+            <CardHeader title={t.security} description={t.securityDescription} />
             <CardBody className="pt-0">
               <MfaPanel initialStatus={mfaStatus} />
             </CardBody>

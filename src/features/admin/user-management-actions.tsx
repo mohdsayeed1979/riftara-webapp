@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogBody, DialogClose, DialogContent, DialogFooter, DialogHeader, DialogTrigger } from '@/components/ui/dialog';
 import { Field, Input } from '@/components/ui/input';
 import { adminResetMfaAction, adminResetPasswordAction, setUserActiveAction, setUserRolesAction } from '@/app/(app)/users/actions';
+import { useTranslations } from '@/i18n/provider';
 import type { AssignableRoleOption } from './user-form-dialog';
 
 /** Manage the target user's role set (atomic replace, escalation-guarded). */
@@ -21,6 +22,7 @@ export function ManageRolesButton({
   currentRoleIds: string[];
 }) {
   const router = useRouter();
+  const t = useTranslations();
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set(currentRoleIds));
   const [pending, start] = useTransition();
@@ -36,7 +38,7 @@ export function ManageRolesButton({
   function save() {
     start(async () => {
       const result = await setUserRolesAction(userId, Array.from(selected));
-      if (result.ok) { toast.success('Roles updated.'); setOpen(false); router.refresh(); }
+      if (result.ok) { toast.success(t('users.rolesUpdated')); setOpen(false); router.refresh(); }
       else toast.error(result.error.message);
     });
   }
@@ -44,10 +46,10 @@ export function ManageRolesButton({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="secondary" size="sm"><ShieldCheck />Roles</Button>
+        <Button variant="secondary" size="sm"><ShieldCheck />{t('users.manageRoles')}</Button>
       </DialogTrigger>
       <DialogContent size="sm">
-        <DialogHeader title="Manage Roles" description="Assign or remove roles. You can only grant roles within your own permissions." />
+        <DialogHeader title={t('users.manageRoles')} description={t('users.manageRolesDesc')} />
         <DialogBody>
           <div className="flex flex-col gap-1.5">
             {roles.map((role) => {
@@ -57,16 +59,16 @@ export function ManageRolesButton({
                 <label key={role.id} className={`flex items-center gap-2 text-[13px] ${locked ? 'opacity-50' : ''}`}>
                   <input type="checkbox" checked={checked} disabled={locked} onChange={() => toggle(role.id)} />
                   {role.name}
-                  {role.isSystem ? <span className="text-[10px] text-[var(--color-text-tertiary)]">system</span> : null}
-                  {locked ? <span className="text-[10px] text-[var(--color-text-tertiary)]">— not assignable</span> : null}
+                  {role.isSystem ? <span className="text-[10px] text-[var(--color-text-tertiary)]">{t('users.systemTag')}</span> : null}
+                  {locked ? <span className="text-[10px] text-[var(--color-text-tertiary)]">{t('users.notAssignableTag')}</span> : null}
                 </label>
               );
             })}
           </div>
         </DialogBody>
         <DialogFooter>
-          <DialogClose asChild><Button type="button" variant="ghost">Cancel</Button></DialogClose>
-          <Button type="button" loading={pending} onClick={save}>Save Roles</Button>
+          <DialogClose asChild><Button type="button" variant="ghost">{t('common.cancel')}</Button></DialogClose>
+          <Button type="button" loading={pending} onClick={save}>{t('users.saveRoles')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -76,6 +78,7 @@ export function ManageRolesButton({
 /** Administrator password reset: forces a change and revokes all sessions. */
 export function ResetPasswordButton({ userId }: { userId: string }) {
   const router = useRouter();
+  const t = useTranslations();
   const [open, setOpen] = useState(false);
   const [password, setPassword] = useState('');
   const [pending, start] = useTransition();
@@ -83,7 +86,7 @@ export function ResetPasswordButton({ userId }: { userId: string }) {
   function submit() {
     start(async () => {
       const result = await adminResetPasswordAction(userId, password);
-      if (result.ok) { toast.success('Password reset. The user must change it at next sign-in; sessions revoked.'); setOpen(false); setPassword(''); router.refresh(); }
+      if (result.ok) { toast.success(t('users.passwordResetDone')); setOpen(false); setPassword(''); router.refresh(); }
       else toast.error(result.error.message);
     });
   }
@@ -91,18 +94,18 @@ export function ResetPasswordButton({ userId }: { userId: string }) {
   return (
     <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) setPassword(''); }}>
       <DialogTrigger asChild>
-        <Button variant="secondary" size="sm"><KeyRound />Reset Password</Button>
+        <Button variant="secondary" size="sm"><KeyRound />{t('users.resetPassword')}</Button>
       </DialogTrigger>
       <DialogContent size="sm">
-        <DialogHeader title="Reset Password" description="Sets a temporary password, forces a change at next sign-in and signs the user out everywhere." />
+        <DialogHeader title={t('users.resetPassword')} description={t('users.resetPasswordDesc')} />
         <DialogBody>
-          <Field label="Temporary Password" hint="Min 12 chars incl. upper, lower, digit and symbol">
+          <Field label={t('users.temporaryPassword')} hint={t('users.tempPasswordHint')}>
             <Input type="text" autoComplete="off" value={password} onChange={(e) => setPassword(e.target.value)} />
           </Field>
         </DialogBody>
         <DialogFooter>
-          <DialogClose asChild><Button type="button" variant="ghost">Cancel</Button></DialogClose>
-          <Button type="button" loading={pending} onClick={submit} disabled={!password}>Reset Password</Button>
+          <DialogClose asChild><Button type="button" variant="ghost">{t('common.cancel')}</Button></DialogClose>
+          <Button type="button" loading={pending} onClick={submit} disabled={!password}>{t('users.resetPassword')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -112,13 +115,14 @@ export function ResetPasswordButton({ userId }: { userId: string }) {
 /** Administrator MFA reset — disables the target user's two-factor (e.g. lost device). */
 export function ResetMfaButton({ userId }: { userId: string }) {
   const router = useRouter();
+  const t = useTranslations();
   const [open, setOpen] = useState(false);
   const [pending, start] = useTransition();
 
   function submit() {
     start(async () => {
       const result = await adminResetMfaAction(userId);
-      if (result.ok) { toast.success('Two-factor authentication was reset for this user.'); setOpen(false); router.refresh(); }
+      if (result.ok) { toast.success(t('users.resetMfaDone')); setOpen(false); router.refresh(); }
       else toast.error(result.error.message);
     });
   }
@@ -126,13 +130,13 @@ export function ResetMfaButton({ userId }: { userId: string }) {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="secondary" size="sm"><ShieldOff />Reset MFA</Button>
+        <Button variant="secondary" size="sm"><ShieldOff />{t('users.resetMfa')}</Button>
       </DialogTrigger>
       <DialogContent size="sm">
-        <DialogHeader title="Reset Two-Factor Authentication" description="Disables the user's two-factor authentication so they can sign in with their password alone and re-enroll. Use this only after verifying the user's identity." />
+        <DialogHeader title={t('users.resetMfaTitle')} description={t('users.resetMfaDesc')} />
         <DialogFooter>
-          <DialogClose asChild><Button type="button" variant="ghost">Cancel</Button></DialogClose>
-          <Button type="button" variant="destructive" loading={pending} onClick={submit}>Reset MFA</Button>
+          <DialogClose asChild><Button type="button" variant="ghost">{t('common.cancel')}</Button></DialogClose>
+          <Button type="button" variant="destructive" loading={pending} onClick={submit}>{t('users.resetMfa')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -142,13 +146,14 @@ export function ResetMfaButton({ userId }: { userId: string }) {
 /** Activate / deactivate with confirmation. Deactivation revokes sessions. */
 export function StatusToggleButton({ userId, isActive, isSelf }: { userId: string; isActive: boolean; isSelf: boolean }) {
   const router = useRouter();
+  const t = useTranslations();
   const [open, setOpen] = useState(false);
   const [pending, start] = useTransition();
 
   function submit() {
     start(async () => {
       const result = await setUserActiveAction(userId, !isActive);
-      if (result.ok) { toast.success(isActive ? 'User deactivated.' : 'User activated.'); setOpen(false); router.refresh(); }
+      if (result.ok) { toast.success(isActive ? t('users.userDeactivated') : t('users.userActivated')); setOpen(false); router.refresh(); }
       else toast.error(result.error.message);
     });
   }
@@ -158,16 +163,16 @@ export function StatusToggleButton({ userId, isActive, isSelf }: { userId: strin
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant={isActive ? 'secondary' : 'primary'} size="sm"><Power />{isActive ? 'Deactivate' : 'Activate'}</Button>
+        <Button variant={isActive ? 'secondary' : 'primary'} size="sm"><Power />{isActive ? t('users.deactivate') : t('users.activate')}</Button>
       </DialogTrigger>
       <DialogContent size="sm">
         <DialogHeader
-          title={isActive ? 'Deactivate User' : 'Activate User'}
-          description={isActive ? 'The user will be signed out of all sessions and unable to sign in until reactivated.' : 'The user will be able to sign in again with their existing password and roles.'}
+          title={isActive ? t('users.deactivateTitle') : t('users.activateTitle')}
+          description={isActive ? t('users.deactivateDesc') : t('users.activateDesc')}
         />
         <DialogFooter>
-          <DialogClose asChild><Button type="button" variant="ghost">Cancel</Button></DialogClose>
-          <Button type="button" variant={isActive ? 'destructive' : 'primary'} loading={pending} onClick={submit}>{isActive ? 'Deactivate' : 'Activate'}</Button>
+          <DialogClose asChild><Button type="button" variant="ghost">{t('common.cancel')}</Button></DialogClose>
+          <Button type="button" variant={isActive ? 'destructive' : 'primary'} loading={pending} onClick={submit}>{isActive ? t('users.deactivate') : t('users.activate')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

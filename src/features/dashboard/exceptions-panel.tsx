@@ -8,13 +8,18 @@ import { cn } from '@/lib/utils';
  * Executive exceptions (BRD 74, 147): overview → exception → drill down →
  * action. Every row links straight to the records that need attention.
  */
-export function ExceptionsPanel({ exceptions }: { exceptions: ExceptionItem[] }) {
+export function ExceptionsPanel({
+  exceptions,
+  title,
+  description,
+}: {
+  exceptions: ExceptionItem[];
+  title: string;
+  description: string;
+}) {
   return (
     <Card>
-      <CardHeader
-        title="Requires attention"
-        description="Items breaching the thresholds configured under Settings › KPI Thresholds."
-      />
+      <CardHeader title={title} description={description} />
       <ul className="divide-y divide-[var(--color-border-subtle)] border-t border-[var(--color-border-subtle)]">
         {exceptions.map((exception) => (
           <li key={exception.key}>

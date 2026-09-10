@@ -12,6 +12,7 @@ import { Pagination, Table, TableContainer, TBody, TD, TH, THead, TR } from '@/c
 import { can, requirePermission } from '@/lib/auth/guard';
 import { formatCompactCurrency, formatDate } from '@/lib/format';
 import { getRequestLocale } from '@/lib/locale';
+import { getMessages, interpolate } from '@/i18n';
 import { listContracts, type ContractListFilters } from '@/services/contract-service';
 
 export const metadata: Metadata = { title: 'Contracts' };
@@ -27,6 +28,8 @@ export default async function ContractsPage({
   const user = await requirePermission('contracts:view');
   const params = await searchParams;
   const locale = await getRequestLocale();
+  const m = getMessages(locale);
+  const t = m.contracts;
   const page = Math.max(1, Number(params.page) || 1);
   const allowedPropertyIds = user.scopedPropertyIds.length ? user.scopedPropertyIds : null;
 
@@ -57,14 +60,14 @@ export default async function ContractsPage({
   return (
     <div className="flex flex-col gap-5">
       <PageHeader
-        title="Contracts"
-        subtitle="Lease contracts across the portfolio, from draft to renewal."
+        title={t.title}
+        subtitle={t.subtitle}
         actions={
           can(user, 'contracts:create') ? (
             <Button asChild>
               <Link href="/contracts/new">
                 <Plus />
-                Create Contract
+                {t.createContract}
               </Link>
             </Button>
           ) : undefined
@@ -73,27 +76,27 @@ export default async function ContractsPage({
 
       {expiringFilter ? (
         <div className="flex items-center gap-2 rounded-[var(--radius-control)] border border-[var(--color-warning-border)] bg-[var(--color-warning-soft)] px-3.5 py-2 text-[12.5px] text-[#b97a08]">
-          Showing contracts expiring within {expiringFilter} days.
+          {interpolate(t.expiringWithin, { days: expiringFilter })}
           <Link href="/contracts" className="font-medium underline">
-            Clear
+            {t.clear}
           </Link>
         </div>
       ) : null}
 
       <FilterBar
-        searchPlaceholder="Search by contract number, Ejar reference or tenant..."
+        searchPlaceholder={t.searchPlaceholder}
         filters={[
           {
             key: 'status',
-            placeholder: 'All Statuses',
+            placeholder: t.allStatuses,
             options: [
-              { value: 'active', label: 'Active' },
-              { value: 'signed', label: 'Signed' },
-              { value: 'draft', label: 'Draft' },
-              { value: 'pending_approval', label: 'Pending Approval' },
-              { value: 'expired', label: 'Expired' },
-              { value: 'terminated', label: 'Terminated' },
-              { value: 'renewal_pending', label: 'Renewal Pending' },
+              { value: 'active', label: m.common.statuses.active },
+              { value: 'signed', label: m.common.statuses.signed },
+              { value: 'draft', label: m.common.statuses.draft },
+              { value: 'pending_approval', label: m.common.statuses.pending_approval },
+              { value: 'expired', label: m.common.statuses.expired },
+              { value: 'terminated', label: m.common.statuses.terminated },
+              { value: 'renewal_pending', label: m.common.statuses.renewal_pending },
             ],
           },
         ]}
@@ -103,14 +106,14 @@ export default async function ContractsPage({
         {items.length === 0 ? (
           <EmptyState
             icon={<FileText />}
-            title="No contracts found"
-            description="Create a lease contract to get started."
+            title={t.noContracts}
+            description={t.noContractsHint}
             action={
               can(user, 'contracts:create') ? (
                 <Button asChild>
                   <Link href="/contracts/new">
                     <Plus />
-                    Create Contract
+                    {t.createContract}
                   </Link>
                 </Button>
               ) : undefined
@@ -122,15 +125,15 @@ export default async function ContractsPage({
               <Table>
                 <THead>
                   <TR>
-                    <TH>Contract</TH>
-                    <TH>Tenant</TH>
-                    <TH>Property / Unit</TH>
-                    <TH alignment="end">Start</TH>
-                    <TH alignment="end">End</TH>
-                    <TH alignment="end">Annual Rent</TH>
-                    <TH>Frequency</TH>
-                    <TH alignment="center">Status</TH>
-                    <TH alignment="end">Actions</TH>
+                    <TH>{t.contract}</TH>
+                    <TH>{t.tenant}</TH>
+                    <TH>{t.propertyUnit}</TH>
+                    <TH alignment="end">{t.startDate}</TH>
+                    <TH alignment="end">{t.endDate}</TH>
+                    <TH alignment="end">{t.annualRent}</TH>
+                    <TH>{t.frequency}</TH>
+                    <TH alignment="center">{m.common.status}</TH>
+                    <TH alignment="end">{m.common.actions}</TH>
                   </TR>
                 </THead>
                 <TBody>
@@ -166,10 +169,10 @@ export default async function ContractsPage({
                       <TD className="text-[var(--color-text-secondary)] capitalize">{contract.paymentFrequency.replace(/_/g, '-')}</TD>
                       <TD alignment="center"><StatusBadge status={contract.status} /></TD>
                       <TD alignment="end" className="whitespace-nowrap">
-                        <Link href={`/contracts/${contract.id}`} className="text-[12px] font-medium text-[var(--color-info)] hover:underline">View</Link>
+                        <Link href={`/contracts/${contract.id}`} className="text-[12px] font-medium text-[var(--color-info)] hover:underline">{t.view}</Link>
                         {can(user, 'contracts:edit') && ['draft', 'issued', 'pending_approval'].includes(contract.status) ? (
                           <Link href={`/contracts/${contract.id}/edit`} className="ms-3 inline-flex items-center gap-1 text-[12px] font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]">
-                            <Pencil className="size-3" />Edit
+                            <Pencil className="size-3" />{m.common.edit}
                           </Link>
                         ) : null}
                       </TD>

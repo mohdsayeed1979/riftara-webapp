@@ -31,6 +31,7 @@ import { DashboardScopeFilters } from '@/features/dashboard/scope-filters';
 import { requirePermission } from '@/lib/auth/guard';
 import { formatCompactCurrency, formatDate, formatPercent, formatRelativeTime } from '@/lib/format';
 import { getRequestLocale, getRequestLocationId } from '@/lib/locale';
+import { getMessages, interpolate, type Messages } from '@/i18n';
 import { can } from '@/lib/auth/guard';
 import {
   getRecentLeads,
@@ -55,13 +56,13 @@ import { formatCurrency } from '@/lib/format';
 export const metadata: Metadata = { title: 'Executive Dashboard' };
 export const dynamic = 'force-dynamic';
 
-function greetingKey(now: Date): 'Good morning' | 'Good afternoon' | 'Good evening' {
+function greeting(now: Date, d: Messages['dashboard']): string {
   const hour = Number(
     new Intl.DateTimeFormat('en-US', { hour: 'numeric', hour12: false, timeZone: 'Asia/Riyadh' }).format(now),
   );
-  if (hour < 12) return 'Good morning';
-  if (hour < 17) return 'Good afternoon';
-  return 'Good evening';
+  if (hour < 12) return d.greetingMorning;
+  if (hour < 17) return d.greetingAfternoon;
+  return d.greetingEvening;
 }
 
 function resolvePeriod(value: string | undefined): { months: number; label: string } {
@@ -85,6 +86,8 @@ export default async function DashboardPage({
   const user = await requirePermission('dashboard:view');
   const params = await searchParams;
   const locale = await getRequestLocale();
+  const m = getMessages(locale);
+  const d = m.dashboard;
   const cookieCityId = await getRequestLocationId();
   const period = resolvePeriod(params.period);
 
@@ -122,9 +125,9 @@ export default async function DashboardPage({
     periodEnd,
   });
 
-  const cityName = filterOptions.cities.find((c) => c.id === resolvedCityId)?.name ?? 'All Cities';
-  const buildingName = selectedBuilding?.name ?? 'All Buildings';
-  const unitName = selectedUnit?.name ?? 'All Units';
+  const cityName = filterOptions.cities.find((c) => c.id === resolvedCityId)?.name ?? d.allCities;
+  const buildingName = selectedBuilding?.name ?? d.allBuildings;
+  const unitName = selectedUnit?.name ?? d.allUnits;
   const unitFocus = unitId ? await getUnitFocus(user.organizationId, unitId) : null;
 
   const [
@@ -157,7 +160,7 @@ export default async function DashboardPage({
   return (
     <div className="flex flex-col gap-5">
       <PageHeader
-        title={`${greetingKey(new Date())}, ${firstName}`}
+        title={`${greeting(new Date(), d)}, ${firstName}`}
         subtitle={`${cityName} → ${buildingName} → ${unitName}`}
         actions={
           <div className="flex flex-wrap items-end gap-2">
@@ -174,7 +177,7 @@ export default async function DashboardPage({
               <Button asChild>
                 <Link href="/properties/new">
                   <Plus />
-                  Add Property
+                  {d.addProperty}
                 </Link>
               </Button>
             ) : null}
@@ -188,8 +191,8 @@ export default async function DashboardPage({
         <Card>
           <EmptyState
             icon={<Building2 />}
-            title="No units found for the selected filters"
-            description="Adjust or clear the City / Building / Unit filters to see portfolio metrics."
+            title={d.noUnitsTitle}
+            description={d.noUnitsHint}
           />
         </Card>
       ) : null}
@@ -199,44 +202,44 @@ export default async function DashboardPage({
       {/* Unit status KPIs — each drills into the filtered unit inventory. */}
       <KpiGrid columns={5}>
         <KpiCard
-          label="Total Units"
+          label={d.totalUnits}
           value={availability.total.toLocaleString()}
-          caption={`Across ${summary.propertyCount} properties`}
+          caption={interpolate(d.acrossProjects, { count: summary.propertyCount })}
           icon={<Building2 />}
           tone="neutral"
           href="/units"
         />
         <KpiCard
-          label="Available"
+          label={d.available}
           value={availability.available.toLocaleString()}
-          caption="Ready for lease"
+          caption={d.readyForLease}
           icon={<KeyRound />}
           tone="success"
           ringValue={availability.availableShare}
           href="/units?availability=available"
         />
         <KpiCard
-          label="Reserved"
+          label={d.reserved}
           value={availability.reserved.toLocaleString()}
-          caption="Under negotiation"
+          caption={d.underNegotiation}
           icon={<Clock />}
           tone="warning"
           ringValue={availability.reservedShare}
           href="/units?availability=reserved"
         />
         <KpiCard
-          label="Leased"
+          label={d.leased}
           value={availability.leased.toLocaleString()}
-          caption="Contracted / Active"
+          caption={d.contractedActive}
           icon={<FileText />}
           tone="info"
           ringValue={availability.leasedShare}
           href="/units?availability=leased"
         />
         <KpiCard
-          label="Not Available"
+          label={d.notAvailable}
           value={availability.notAvailable.toLocaleString()}
-          caption="Off-market / Services"
+          caption={d.offMarketServices}
           icon={<Ban />}
           tone="neutral"
           ringValue={availability.notAvailableShare}
@@ -247,49 +250,49 @@ export default async function DashboardPage({
       {/* Financial KPIs */}
       <KpiGrid columns={6}>
         <KpiCard
-          label="Portfolio Value"
+          label={d.portfolioValue}
           value={money(summary.marketValue)}
-          caption="Current market valuation"
+          caption={d.marketValuation}
           icon={<Building2 />}
           tone="gold"
           href="/financials/valuations"
         />
         <KpiCard
-          label="Annual Rental Value"
+          label={d.annualRentalValue}
           value={money(summary.annualRentalValue)}
-          caption="At full occupancy"
+          caption={d.atFullOccupancy}
           icon={<CircleDollarSign />}
           tone="neutral"
           href="/units"
         />
         <KpiCard
-          label="Contracted Revenue"
+          label={d.contractedRevenue}
           value={money(summary.contractedRevenue)}
-          caption="Active leases"
+          caption={d.activeLeases}
           icon={<FileText />}
           tone="info"
           href="/contracts"
         />
         <KpiCard
-          label="Collected Revenue"
+          label={d.collectedRevenue}
           value={money(summary.collectedRevenue)}
-          caption={`${period.label} collections`}
+          caption={period.label}
           icon={<ReceiptText />}
           tone="success"
           href="/collections"
         />
         <KpiCard
-          label="Outstanding"
+          label={d.outstanding}
           value={money(summary.outstanding)}
-          caption={`${money(summary.overdue)} overdue`}
+          caption={`${money(summary.overdue)} ${m.common.statuses.overdue}`}
           icon={<Clock />}
           tone={summary.overdue > 0 ? 'warning' : 'neutral'}
           href="/collections?status=overdue"
         />
         <KpiCard
-          label="Collection Rate"
+          label={d.collectionRate}
           value={formatPercent(summary.collectionRate, { locale })}
-          caption="Collected of billed"
+          caption={d.collectedOfBilled}
           icon={<ClipboardCheck />}
           tone={summary.collectionRate >= 95 ? 'success' : summary.collectionRate >= 88 ? 'warning' : 'error'}
           ringValue={summary.collectionRate}
@@ -299,60 +302,60 @@ export default async function DashboardPage({
 
       <KpiGrid columns={6}>
         <KpiCard
-          label="Occupancy Rate"
+          label={d.occupancyRate}
           value={formatPercent(summary.occupancyRate, { locale })}
-          caption={`${summary.occupiedUnits} of ${summary.totalUnits} units`}
+          caption={`${summary.occupiedUnits} / ${summary.totalUnits}`}
           icon={<ClipboardCheck />}
           tone="success"
           ringValue={summary.occupancyRate}
           href="/units?availability=leased"
         />
         <KpiCard
-          label="Vacancy Rate"
+          label={d.vacancyRate}
           value={formatPercent(summary.vacancyRate, { locale })}
-          caption={`${summary.availableUnits} units available`}
+          caption={`${summary.availableUnits} ${d.available}`}
           icon={<Clock />}
           tone="warning"
           higherIsBetter={false}
           href="/units?availability=available"
         />
         <KpiCard
-          label="Net Operating Income"
+          label={d.noi}
           value={money(summary.netOperatingIncome)}
-          caption={`${formatPercent(summary.noiMargin, { locale })} margin`}
+          caption={formatPercent(summary.noiMargin, { locale })}
           icon={<TrendingUp />}
           tone="info"
           href="/financials"
         />
         <KpiCard
-          label="Operating Expenses"
+          label={d.opex}
           value={money(summary.operatingExpenses)}
-          caption={`${money(summary.maintenanceCost)} maintenance`}
+          caption={`${money(summary.maintenanceCost)} · ${m.nav.maintenance}`}
           icon={<Wrench />}
           tone="neutral"
           higherIsBetter={false}
           href="/financials/expenses"
         />
         <KpiCard
-          label="Expiring Contracts"
+          label={d.expiringContracts}
           value={String(summary.expiringContracts)}
-          caption={`${money(summary.expiringContractValue)} at risk`}
+          caption={money(summary.expiringContractValue)}
           icon={<CalendarDays />}
           tone={summary.expiringContracts > 0 ? 'warning' : 'neutral'}
           higherIsBetter={false}
           href="/contracts?expiringWithinDays=90"
         />
         <KpiCard
-          label="Gross Yield"
+          label={d.grossYield}
           value={formatPercent(summary.grossYield, { locale, decimals: 1 })}
-          caption={`WALE ${summary.wale} years`}
+          caption={`WALE ${summary.wale}`}
           icon={<TrendingUp />}
           tone="gold"
           href="/reports"
         />
       </KpiGrid>
 
-      {exceptions.length > 0 ? <ExceptionsPanel exceptions={exceptions} /> : null}
+      {exceptions.length > 0 ? <ExceptionsPanel exceptions={exceptions} title={d.exceptions} description={d.exceptionsDesc} /> : null}
 
       {/* Charts */}
       <DashboardCharts
@@ -376,11 +379,11 @@ export default async function DashboardPage({
       {/* Properties performance */}
       <Card>
         <CardHeader
-          title="Properties Performance"
+          title={d.propertiesPerformance}
           action={
             <Button variant="link" size="sm" asChild>
               <Link href="/properties">
-                View all
+                {m.common.viewAll}
                 <ArrowRight className="size-3.5 rtl-flip" />
               </Link>
             </Button>
@@ -389,8 +392,8 @@ export default async function DashboardPage({
         {performance.length === 0 ? (
           <EmptyState
             icon={<Building2 />}
-            title="No properties in scope"
-            description="Add a property or adjust your filters to see performance."
+            title={d.noPropertiesInScope}
+            description={d.noPropertiesInScopeHint}
           />
         ) : (
           <TableContainer>
@@ -398,15 +401,15 @@ export default async function DashboardPage({
               <THead>
                 <TR>
                   <TH className="w-10">#</TH>
-                  <TH>Property</TH>
-                  <TH>City</TH>
-                  <TH alignment="end">Total Units</TH>
-                  <TH alignment="end">Available</TH>
-                  <TH alignment="end">Leased</TH>
-                  <TH alignment="end">Occupancy</TH>
-                  <TH alignment="end">Collection</TH>
-                  <TH alignment="end">Annual Rental Value</TH>
-                  <TH alignment="center">Status</TH>
+                  <TH>{d.colProperty}</TH>
+                  <TH>{m.properties.city}</TH>
+                  <TH alignment="end">{d.totalUnits}</TH>
+                  <TH alignment="end">{d.available}</TH>
+                  <TH alignment="end">{d.leased}</TH>
+                  <TH alignment="end">{m.properties.occupancy}</TH>
+                  <TH alignment="end">{m.properties.collection}</TH>
+                  <TH alignment="end">{m.properties.annualRentalValueCol}</TH>
+                  <TH alignment="center">{m.common.status}</TH>
                 </TR>
               </THead>
               <TBody>
@@ -474,27 +477,27 @@ export default async function DashboardPage({
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
         <Card>
           <CardHeader
-            title="Recent Leads"
+            title={d.recentLeads}
             action={
               <Button variant="link" size="sm" asChild>
                 <Link href="/leasing">
-                  View all
+                  {m.common.viewAll}
                   <ArrowRight className="size-3.5 rtl-flip" />
                 </Link>
               </Button>
             }
           />
           {recentLeads.length === 0 ? (
-            <EmptyState title="No leads yet" description="New inquiries will appear here." />
+            <EmptyState title={d.noLeads} description={d.noLeadsHint} />
           ) : (
             <TableContainer>
               <Table>
                 <THead>
                   <TR>
-                    <TH>Name</TH>
-                    <TH>Source</TH>
-                    <TH>Stage</TH>
-                    <TH alignment="end">Date</TH>
+                    <TH>{d.colName}</TH>
+                    <TH>{d.colSource}</TH>
+                    <TH>{d.colStage}</TH>
+                    <TH alignment="end">{m.common.date}</TH>
                   </TR>
                 </THead>
                 <TBody>
@@ -528,27 +531,27 @@ export default async function DashboardPage({
 
         <Card>
           <CardHeader
-            title="Upcoming Renewals"
+            title={d.upcomingRenewals}
             action={
               <Button variant="link" size="sm" asChild>
                 <Link href="/contracts?expiringWithinDays=180">
-                  View all
+                  {m.common.viewAll}
                   <ArrowRight className="size-3.5 rtl-flip" />
                 </Link>
               </Button>
             }
           />
           {renewals.length === 0 ? (
-            <EmptyState title="No renewals due" description="No contracts expire in the next 180 days." />
+            <EmptyState title={d.noRenewals} description={d.noRenewalsHint} />
           ) : (
             <TableContainer>
               <Table>
                 <THead>
                   <TR>
-                    <TH>Tenant</TH>
-                    <TH>Property</TH>
-                    <TH alignment="end">Expiry</TH>
-                    <TH alignment="end">Days Left</TH>
+                    <TH>{d.colTenant}</TH>
+                    <TH>{d.colProperty}</TH>
+                    <TH alignment="end">{d.colExpiry}</TH>
+                    <TH alignment="end">{d.daysLeft}</TH>
                   </TR>
                 </THead>
                 <TBody>
@@ -584,28 +587,28 @@ export default async function DashboardPage({
 
         <Card>
           <CardHeader
-            title="Maintenance Requests"
+            title={d.maintenanceRequests}
             action={
               <Button variant="link" size="sm" asChild>
                 <Link href="/maintenance">
-                  View all
+                  {m.common.viewAll}
                   <ArrowRight className="size-3.5 rtl-flip" />
                 </Link>
               </Button>
             }
           />
           {workOrderRows.length === 0 ? (
-            <EmptyState title="No work orders" description="Reported issues will appear here." />
+            <EmptyState title={d.noWorkOrders} description={d.noWorkOrdersHint} />
           ) : (
             <TableContainer>
               <Table>
                 <THead>
                   <TR>
                     <TH>#</TH>
-                    <TH>Unit</TH>
-                    <TH>Type</TH>
-                    <TH alignment="center">Status</TH>
-                    <TH alignment="center">Priority</TH>
+                    <TH>{d.colUnit}</TH>
+                    <TH>{d.colType}</TH>
+                    <TH alignment="center">{m.common.status}</TH>
+                    <TH alignment="center">{d.colPriority}</TH>
                   </TR>
                 </THead>
                 <TBody>
@@ -643,6 +646,7 @@ export default async function DashboardPage({
 
 function UnitFocusPanel({ focus, locale }: { focus: UnitFocus; locale: 'en' | 'ar' }) {
   const { unit, contract, financial, maintenance } = focus;
+  const md = getMessages(locale);
   const currency = (v: number) => formatCurrency(v, { locale });
   const day = (v: string | null) => (v ? formatDate(v, { locale, style: 'medium' }) : 'N/A');
   const na = (v: string | number | null | undefined) => (v === null || v === undefined || v === '' ? 'N/A' : String(v));
@@ -650,7 +654,7 @@ function UnitFocusPanel({ focus, locale }: { focus: UnitFocus; locale: 'en' | 'a
   return (
     <Card>
       <CardHeader
-        title={`Unit ${unit.unitNumber} — 360° View`}
+        title={`${md.units.unit} ${unit.unitNumber} — ${md.dashboard.common360}`}
         description={`${unit.propertyName}${unit.buildingName ? ` · ${unit.buildingName}` : ''} · ${unit.cityName}`}
         action={<StatusBadge status={unit.availabilityClass} label={unit.statusLabel} />}
       />

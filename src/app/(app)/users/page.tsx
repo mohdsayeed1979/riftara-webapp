@@ -15,6 +15,7 @@ import { ManageRolesButton, ResetPasswordButton, StatusToggleButton } from '@/fe
 import { can, requirePermission } from '@/lib/auth/guard';
 import { formatRelativeTime } from '@/lib/format';
 import { getRequestLocale } from '@/lib/locale';
+import { getMessages, interpolate } from '@/i18n';
 import { getAssignableRoles } from '@/services/user-admin-service';
 
 export const metadata: Metadata = { title: 'Users & Permissions' };
@@ -24,6 +25,8 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
   const user = await requirePermission('users:view');
   const params = await searchParams;
   const locale = await getRequestLocale();
+  const m = getMessages(locale);
+  const t = m.users;
   const db = await getDb();
 
   const canCreate = can(user, 'users:create');
@@ -76,12 +79,12 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
   return (
     <div className="flex flex-col gap-5">
       <PageHeader
-        title="Users & Permissions"
-        subtitle="Manage users, roles and granular permissions."
+        title={t.title}
+        subtitle={t.subtitle}
         actions={
           <div className="flex gap-2">
-            <Button variant="secondary" asChild><Link href="/roles">Roles</Link></Button>
-            <Button variant="secondary" asChild><Link href="/permissions">Permissions</Link></Button>
+            <Button variant="secondary" asChild><Link href="/roles">{t.roles}</Link></Button>
+            <Button variant="secondary" asChild><Link href="/permissions">{t.permissions}</Link></Button>
             {canCreate ? <UserFormDialog mode="create" roles={assignableRoles} /> : null}
           </div>
         }
@@ -90,27 +93,27 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
       <Card>
         <div className="px-5 pb-3 pt-4">
           <FilterBar
-            searchPlaceholder="Search by name or email..."
+            searchPlaceholder={t.searchPlaceholder}
             filters={[
-              { key: 'status', placeholder: 'All Statuses', options: [{ value: 'active', label: 'Active' }, { value: 'inactive', label: 'Inactive' }] },
-              { key: 'roleId', placeholder: 'All Roles', options: assignableRoles.map((r) => ({ value: r.id, label: r.name })) },
+              { key: 'status', placeholder: t.allStatuses, options: [{ value: 'active', label: t.active }, { value: 'inactive', label: t.inactive }] },
+              { key: 'roleId', placeholder: t.allRoles, options: assignableRoles.map((r) => ({ value: r.id, label: r.name })) },
             ]}
           />
         </div>
-        <div className="px-5 pb-2 text-[12px] text-[var(--color-text-tertiary)]">{rows.length} user{rows.length === 1 ? '' : 's'}</div>
+        <div className="px-5 pb-2 text-[12px] text-[var(--color-text-tertiary)]">{interpolate(t.usersCount, { count: rows.length })}</div>
         {rows.length === 0 ? (
-          <EmptyState title="No users found" description="Adjust the filters or create a new user." />
+          <EmptyState title={t.noUsersTitle} description={t.noUsersHint} />
         ) : (
           <TableContainer>
             <Table>
               <THead>
                 <TR>
-                  <TH>User</TH>
-                  <TH>Role</TH>
-                  <TH>Data Scope</TH>
-                  <TH alignment="end">Last Login</TH>
-                  <TH alignment="center">Status</TH>
-                  {hasActions ? <TH alignment="end">Actions</TH> : null}
+                  <TH>{t.userCol}</TH>
+                  <TH>{t.role}</TH>
+                  <TH>{t.dataScope}</TH>
+                  <TH alignment="end">{t.lastLogin}</TH>
+                  <TH alignment="center">{t.status}</TH>
+                  {hasActions ? <TH alignment="end">{m.common.actions}</TH> : null}
                 </TR>
               </THead>
               <TBody>
@@ -125,10 +128,10 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
                         </div>
                       </div>
                     </TD>
-                    <TD>{row.roleNames ? <span className="text-[var(--color-text-secondary)]">{row.roleNames}</span> : <span className="text-[var(--color-text-tertiary)]">No role</span>}</TD>
-                    <TD className="text-[var(--color-text-secondary)]">{Number(row.scopeCount) === 0 ? 'Organization-wide' : `${row.scopeCount} scoped`}</TD>
-                    <TD alignment="end" className="whitespace-nowrap text-[var(--color-text-secondary)]">{row.lastLoginAt ? formatRelativeTime(row.lastLoginAt, { locale }) : 'Never'}</TD>
-                    <TD alignment="center"><Badge tone={row.isActive ? 'success' : 'neutral'} dot>{row.isActive ? 'Active' : 'Inactive'}</Badge></TD>
+                    <TD>{row.roleNames ? <span className="text-[var(--color-text-secondary)]">{row.roleNames}</span> : <span className="text-[var(--color-text-tertiary)]">{t.noRole}</span>}</TD>
+                    <TD className="text-[var(--color-text-secondary)]">{Number(row.scopeCount) === 0 ? t.organizationWide : interpolate(t.scopedCount, { count: row.scopeCount })}</TD>
+                    <TD alignment="end" className="whitespace-nowrap text-[var(--color-text-secondary)]">{row.lastLoginAt ? formatRelativeTime(row.lastLoginAt, { locale }) : t.never}</TD>
+                    <TD alignment="center"><Badge tone={row.isActive ? 'success' : 'neutral'} dot>{row.isActive ? t.active : t.inactive}</Badge></TD>
                     {hasActions ? (
                       <TD alignment="end">
                         <div className="flex justify-end gap-1.5">

@@ -14,6 +14,7 @@ import { RecordPaymentButton } from '@/features/collections/record-payment-butto
 import { can, requirePermission } from '@/lib/auth/guard';
 import { formatCompactCurrency, formatCurrency, formatDate, formatPercent } from '@/lib/format';
 import { getRequestLocale, getRequestLocationId } from '@/lib/locale';
+import { getMessages, interpolate } from '@/i18n';
 import {
   getCollectionSummary,
   getTrendSeries,
@@ -38,6 +39,8 @@ export default async function CollectionsPage({
   const user = await requirePermission('collections:view');
   const params = await searchParams;
   const locale = await getRequestLocale();
+  const m = getMessages(locale);
+  const t = m.collections;
   const cityId = await getRequestLocationId();
   const page = Math.max(1, Number(params.page) || 1);
   const allowedPropertyIds = user.scopedPropertyIds.length ? user.scopedPropertyIds : null;
@@ -84,21 +87,21 @@ export default async function CollectionsPage({
   return (
     <div className="flex flex-col gap-5">
       <PageHeader
-        title="Collections"
-        subtitle="Monitor receivables, track collection performance and manage overdue accounts."
+        title={t.title}
+        subtitle={t.subtitle}
         actions={
           <>
             <Button variant="secondary" asChild>
               <Link href="/collections/dunning">
                 <Bell />
-                Dunning
+                {t.dunning}
               </Link>
             </Button>
             {can(user, 'collections:create') ? (
               <Button variant="secondary" asChild>
                 <Link href="/collections/invoices/generate">
                   <FileText />
-                  Generate Invoices
+                  {t.generateInvoices}
                 </Link>
               </Button>
             ) : null}
@@ -106,7 +109,7 @@ export default async function CollectionsPage({
               <Button variant="secondary" asChild>
                 <a href="/api/v1/collections/export">
                   <Download />
-                  Export
+                  {m.common.export}
                 </a>
               </Button>
             ) : null}
@@ -117,33 +120,33 @@ export default async function CollectionsPage({
 
       <KpiGrid columns={4}>
         <KpiCard
-          label="Total Billed"
+          label={t.totalBilled}
           value={money(summary.billed)}
-          caption="Trailing 12 months"
+          caption={t.trailing12m}
           icon={<Receipt />}
           tone="neutral"
         />
         <KpiCard
-          label="Total Collected"
+          label={t.totalCollected}
           value={money(summary.collected)}
-          caption={`${formatPercent(summary.collectionRate, { locale })} collection rate`}
+          caption={interpolate(t.collectionRateCaption, { rate: formatPercent(summary.collectionRate, { locale }) })}
           icon={<CircleDollarSign />}
           tone="success"
           ringValue={summary.collectionRate}
         />
         <KpiCard
-          label="Outstanding"
+          label={t.outstanding}
           value={money(summary.outstanding)}
-          caption={`${summary.averageDaysOutstanding} days avg age`}
+          caption={interpolate(t.avgAge, { days: summary.averageDaysOutstanding })}
           icon={<Clock />}
           tone="warning"
           higherIsBetter={false}
           href="/collections?status=due"
         />
         <KpiCard
-          label="Overdue"
+          label={t.overdue}
           value={money(summary.overdue)}
-          caption="Past due date"
+          caption={t.pastDue}
           icon={<XCircle />}
           tone="error"
           higherIsBetter={false}
@@ -153,7 +156,7 @@ export default async function CollectionsPage({
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_1.2fr_0.9fr]">
         <Card>
-          <CardHeader title="Aging Analysis" description={`${money(summary.outstanding)} outstanding`} />
+          <CardHeader title={t.agingAnalysis} description={`${money(summary.outstanding)} ${t.outstanding}`} />
           <CardBody className="pt-0">
             <ColumnChart
               data={agingChart}
@@ -166,7 +169,7 @@ export default async function CollectionsPage({
         </Card>
 
         <Card>
-          <CardHeader title="Collection Trend" description="Billed against collected" />
+          <CardHeader title={t.collectionTrend} description={t.billedVsCollected} />
           <CardBody className="pt-0">
             <TrendAreaChart
               data={collectionTrend}
@@ -183,15 +186,15 @@ export default async function CollectionsPage({
 
         <Card>
           <CardHeader
-            title="Top Overdue Tenants"
+            title={t.topOverdueTenants}
             action={
               <Link href="/collections?status=overdue" className="text-[12px] font-medium text-[var(--color-info)] hover:underline">
-                View all
+                {m.common.viewAll}
               </Link>
             }
           />
           {topOverdue.length === 0 ? (
-            <EmptyState title="No overdue tenants" description="All accounts are current." />
+            <EmptyState title={t.noOverdueTenants} description={t.allCurrent} />
           ) : (
             <ul className="divide-y divide-[var(--color-border-subtle)] border-t border-[var(--color-border-subtle)]">
               {topOverdue.map((tenant) => (
@@ -205,7 +208,7 @@ export default async function CollectionsPage({
                         {tenant.tenantName}
                       </span>
                       <span className="block text-[11px] text-[var(--color-text-tertiary)]">
-                        {tenant.invoiceCount} invoices
+                        {interpolate(t.invoicesCount, { count: tenant.invoiceCount })}
                       </span>
                     </span>
                     <span className="text-end">
@@ -225,24 +228,24 @@ export default async function CollectionsPage({
       </div>
 
       <Card>
-        <CardHeader title="Overdue Invoices" description="Receivables requiring collection action" />
+        <CardHeader title={t.overdueInvoices} description={t.receivablesAction} />
         {invoices.items.length === 0 ? (
-          <EmptyState title="No open invoices" description="Invoices requiring collection will appear here." />
+          <EmptyState title={t.noOpenInvoices} description={t.noOpenInvoicesHint} />
         ) : (
           <>
             <TableContainer>
               <Table>
                 <THead>
                   <TR>
-                    <TH>Invoice #</TH>
-                    <TH>Tenant</TH>
-                    <TH>Property</TH>
-                    <TH>Unit</TH>
-                    <TH alignment="end">Due Date</TH>
-                    <TH alignment="end">Amount</TH>
-                    <TH alignment="end">Outstanding</TH>
-                    <TH alignment="end">Days</TH>
-                    <TH alignment="center">Status</TH>
+                    <TH>{t.invoiceNumberCol}</TH>
+                    <TH>{m.contracts.tenant}</TH>
+                    <TH>{m.properties.property}</TH>
+                    <TH>{m.units.unit}</TH>
+                    <TH alignment="end">{t.dueDate}</TH>
+                    <TH alignment="end">{t.amount}</TH>
+                    <TH alignment="end">{t.outstandingCol}</TH>
+                    <TH alignment="end">{t.days}</TH>
+                    <TH alignment="center">{m.common.status}</TH>
                   </TR>
                 </THead>
                 <TBody>

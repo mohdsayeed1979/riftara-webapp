@@ -1,4 +1,7 @@
+'use client';
+
 import { Badge, type BadgeProps } from './badge';
+import { useI18n } from '@/i18n/provider';
 
 /**
  * Maps the design-system status tokens (BRD 13 unit statuses, contract,
@@ -107,9 +110,15 @@ export function StatusBadge({
   size?: BadgeProps['size'];
   className?: string;
 }) {
+  const { t } = useI18n();
+  // An explicit label wins; otherwise localize the enum/DB token via the catalog,
+  // falling back to a humanized form for tokens not (yet) in `common.statuses`.
+  const key = status ? `common.statuses.${status}` : '';
+  const translated = key ? t(key) : '';
+  const display = label ?? (translated && translated !== key ? translated : humanizeStatus(status));
   return (
     <Badge tone={tone ?? toneForStatus(status)} size={size} dot={dot} className={className}>
-      {label ?? humanizeStatus(status)}
+      {display}
     </Badge>
   );
 }
