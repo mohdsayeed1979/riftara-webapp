@@ -37,10 +37,14 @@ The seed uses a fixed-seed PRNG, so runs are reproducible. The test harness
 applies constraints and seeds.
 
 ## Result
-368 tests across 27 files, all passing. Coverage has grown well beyond the three
+395 tests across 29 files, all passing. Coverage has grown well beyond the three
 foundational files above to include module suites (documents, global search,
-compliance, scheduled reporting, …), each exercising service logic, RBAC/data
-scope, organization isolation and the API routes. Scheduled reporting
+compliance, scheduled reporting, MFA/TOTP, …), each exercising service logic,
+RBAC/data scope, organization isolation and the API routes. MFA
+(`tests/mfa.test.ts`) covers TOTP/base32 primitives, secret encryption, recovery-
+code hashing, enrollment (invalid vs valid code), the deferred-session login
+challenge, recovery-code one-time use, regeneration, disable, rate limiting,
+admin reset and non-exposure of secrets. Scheduled reporting
 (`tests/report-schedules.test.ts`) additionally covers timezone-aware next-run
 computation, idempotent per-occurrence execution, success/failure recording and
 run-now authorization. Add UI end-to-end coverage (Playwright) as a follow-up;

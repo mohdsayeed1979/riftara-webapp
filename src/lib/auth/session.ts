@@ -9,6 +9,9 @@ import { permissions, rolePermissions, roles, sessions, userRoles, userScopes, u
 import type { PermissionKey } from '@/lib/permissions/catalog';
 
 export const SESSION_COOKIE = 'riftara_session';
+/** Short-lived cookie holding the pending MFA login challenge (no full session yet). */
+export const MFA_CHALLENGE_COOKIE = 'riftara_mfa';
+const MFA_CHALLENGE_TTL_MS = 5 * 60 * 1000;
 
 export interface SessionUser {
   id: string;
@@ -203,4 +206,52 @@ export async function revokeAllSessionsForUser(userId: string): Promise<void> {
     .update(sessions)
     .set({ revokedAt: new Date() })
     .where(and(eq(sessions.userId, userId), isNull(sessions.revokedAt)));
+}
+
+/* ----------------------------- MFA challenge ----------------------------- */
+
+/**
+ * Issues a short-lived, signed MFA-challenge cookie AFTER a correct password but
+ * BEFORE a full session exists. It carries only the user id and org — never the
+ * password — and expires in 5 minutes. A full session is created only once the
+ * second factor is verified.
+ */
+export async function createMfaChallenge(userId: string, organizationId: string): Promise<void> {
+  const expiresAt = new Date(Date.now() + MFA_CHALLENGE_TTL_MS);
+  const jwt = await new SignJWT({ org: organizationId, pur: 'mfa' })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setSubject(userId)
+    .setIssuedAt()
+    .setIssuer('riftara')
+    .setAudience('riftara-mfa')
+    .setExpirationTime(expiresAt)
+    .sign(secretKey);
+
+  const cookieStore = await cookies();
+  cookieStore.set(MFA_CHALLENGE_COOKIE, jwt, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: env.NODE_ENV === 'production',
+    path: '/',
+    expires: expiresAt,
+  });
+}
+
+/** Reads and verifies the pending MFA challenge, or null if absent/expired/invalid. */
+export async function readMfaChallenge(): Promise<{ userId: string; organizationId: string } | null> {
+  const cookieStore = await cookies();
+  const jwt = cookieStore.get(MFA_CHALLENGE_COOKIE)?.value;
+  if (!jwt) return null;
+  try {
+    const { payload } = await jwtVerify(jwt, secretKey, { issuer: 'riftara', audience: 'riftara-mfa' });
+    if (payload.pur !== 'mfa' || typeof payload.sub !== 'string' || typeof payload.org !== 'string') return null;
+    return { userId: payload.sub, organizationId: payload.org };
+  } catch {
+    return null;
+  }
+}
+
+export async function clearMfaChallenge(): Promise<void> {
+  const cookieStore = await cookies();
+  cookieStore.delete(MFA_CHALLENGE_COOKIE);
 }

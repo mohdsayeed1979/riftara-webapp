@@ -64,6 +64,48 @@ export const users = pgTable(
   ],
 );
 
+/**
+ * Per-user TOTP enrollment (BRD §148-149). One row per user. The secret is
+ * stored AES-256-GCM-encrypted (never in clear); `activatedAt` stays null until
+ * the user proves possession with a valid code, at which point `users.mfa_enabled`
+ * is set true. Disabling MFA deletes the row (and its recovery codes via cascade).
+ */
+export const userMfa = pgTable(
+  'user_mfa',
+  {
+    id: pk(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    encryptedSecret: text('encrypted_secret').notNull(),
+    activatedAt: timestamp('activated_at', { withTimezone: true }),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (t) => [unique('user_mfa_user_uq').on(t.userId), index('user_mfa_org_idx').on(t.organizationId)],
+);
+
+/** One-time recovery codes, stored only as SHA-256 hashes; `usedAt` marks a code consumed. */
+export const mfaRecoveryCodes = pgTable(
+  'mfa_recovery_codes',
+  {
+    id: pk(),
+    userMfaId: uuid('user_mfa_id')
+      .notNull()
+      .references(() => userMfa.id, { onDelete: 'cascade' }),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    codeHash: text('code_hash').notNull(),
+    usedAt: timestamp('used_at', { withTimezone: true }),
+    createdAt: timestamps.createdAt,
+  },
+  (t) => [index('mfa_recovery_codes_mfa_idx').on(t.userMfaId)],
+);
+
 export const roles = pgTable(
   'roles',
   {

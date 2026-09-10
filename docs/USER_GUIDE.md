@@ -131,10 +131,31 @@ The Integration Hub shows each connector's real status — **Not Connected**,
 **Configuration Required**, **Connected** or **Error** — derived from whether its
 credentials are configured. Status is never faked.
 
+## My Account & two-factor authentication
+**My Account → Security** is where you manage two-factor authentication (2FA/MFA):
+
+- **Enable.** Choose *Enable two-factor authentication*, scan the QR code with an
+  authenticator app (Google Authenticator, Microsoft Authenticator, 1Password,
+  or any TOTP app) — or type the shown setup key manually — then enter the
+  6-digit code to confirm. MFA turns on only after that code is verified.
+- **Recovery codes.** On enabling, you are shown ten one-time recovery codes.
+  Save them somewhere safe: each can be used once to sign in if you lose your
+  device. *Regenerate recovery codes* issues a fresh set and invalidates the old
+  ones (a current code is required).
+- **Signing in with MFA.** After your password, you are asked for a 6-digit code.
+  You can switch to *Use a recovery code instead* if you don't have your device.
+  You are only signed in once the second factor is verified.
+- **Disable.** *Disable* turns MFA off after you confirm with a current code.
+
+If you lose access to both your device and your recovery codes, an administrator
+(with user-management permission) can reset your MFA from your user page so you
+can sign in with your password and re-enroll.
+
 ## Users & Permissions
 Users with their roles, data scope and last login. **Roles** shows each role's
 permission and user counts; **Permissions** shows the full role × permission
-matrix.
+matrix. For a user who has enabled two-factor authentication, an administrator
+can **Reset MFA** (disable it) after verifying their identity.
 
 ## Settings
 Business rules and their enforcement, configurable thresholds (approvals, SLA,

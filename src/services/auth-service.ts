@@ -5,7 +5,17 @@ import { getDb } from '@/db/client';
 import { loginAttempts, users } from '@/db/schema';
 import { recordAudit } from '@/lib/audit';
 import { verifyPassword } from '@/lib/auth/password';
-import { clientIp, createSession, destroySession, loadSessionUser, type SessionUser } from '@/lib/auth/session';
+import {
+  clearMfaChallenge,
+  clientIp,
+  createMfaChallenge,
+  createSession,
+  destroySession,
+  loadSessionUser,
+  readMfaChallenge,
+  type SessionUser,
+} from '@/lib/auth/session';
+import { isMfaActive, verifyLoginChallenge } from '@/services/mfa-service';
 import { AppError } from '@/lib/errors';
 
 /**
@@ -29,6 +39,8 @@ export interface SignInResult {
   ok: boolean;
   user?: SessionUser;
   failure?: SignInFailure;
+  /** Password was correct but MFA is enabled — no session created yet. */
+  mfaRequired?: boolean;
 }
 
 async function logAttempt(email: string, successful: boolean, reason?: string): Promise<void> {
@@ -105,26 +117,96 @@ export async function signIn(email: string, password: string): Promise<SignInRes
     return { ok: false, failure: shouldLock ? 'account_locked' : 'invalid_credentials' };
   }
 
-  await db
-    .update(users)
-    .set({ failedLoginCount: 0, lockedUntil: null, lastLoginAt: new Date() })
-    .where(eq(users.id, user.id));
+  // Password correct — clear the failure counter and lock.
+  await db.update(users).set({ failedLoginCount: 0, lockedUntil: null }).where(eq(users.id, user.id));
 
-  await createSession(user.id, user.organizationId);
-  await logAttempt(normalizedEmail, true);
+  // If the user has an active second factor, DO NOT create a session yet. Issue
+  // a short-lived MFA challenge; the session is created only after the second
+  // factor is verified in completeMfaLogin.
+  if (await isMfaActive(user.id)) {
+    await createMfaChallenge(user.id, user.organizationId);
+    return { ok: true, mfaRequired: true };
+  }
 
+  await finalizeLogin(user.id, user.organizationId, normalizedEmail, 'password');
   const sessionUser = await loadSessionUser(user.id);
   if (!sessionUser) throw new AppError('INTERNAL', 'Unable to establish the session.');
+  return { ok: true, user: sessionUser };
+}
 
+/** Creates the session, records the successful-login attempt and audits it. */
+async function finalizeLogin(userId: string, organizationId: string, email: string, factor: 'password' | 'mfa_totp' | 'mfa_recovery'): Promise<void> {
+  const db = await getDb();
+  await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, userId));
+  await createSession(userId, organizationId);
+  await logAttempt(email, true, factor === 'password' ? undefined : factor);
   await recordAudit(db, {
-    organizationId: user.organizationId,
+    organizationId,
     action: 'login',
     entityType: 'user',
-    entityId: user.id,
-    entityLabel: user.email,
-    actor: { id: sessionUser.id, fullName: sessionUser.fullName },
+    entityId: userId,
+    entityLabel: email,
+    reason: factor === 'password' ? undefined : 'mfa_challenge_success',
+    actor: { id: userId, fullName: email },
   });
+}
 
+export type MfaLoginFailure = 'no_challenge' | 'invalid_code';
+
+export interface MfaLoginResult {
+  ok: boolean;
+  user?: SessionUser;
+  failure?: MfaLoginFailure;
+}
+
+/**
+ * Completes a login that is pending MFA: verifies the code against the challenge
+ * cookie, and only then creates the authenticated session. Failures are audited
+ * and rate-limited (in mfa-service). Never reveals whether the account exists.
+ */
+export async function completeMfaLogin(code: string): Promise<MfaLoginResult> {
+  const challenge = await readMfaChallenge();
+  if (!challenge) return { ok: false, failure: 'no_challenge' };
+
+  const db = await getDb();
+  const [user] = await db
+    .select({ id: users.id, email: users.email, organizationId: users.organizationId, isActive: users.isActive })
+    .from(users)
+    .where(and(eq(users.id, challenge.userId), isNull(users.deletedAt)))
+    .limit(1);
+  if (!user || !user.isActive) {
+    await clearMfaChallenge();
+    return { ok: false, failure: 'no_challenge' };
+  }
+
+  const factor = await verifyLoginChallenge(user.id, user.organizationId, code);
+  if (!factor) {
+    await logAttempt(user.email, false, 'mfa_challenge_failure');
+    await recordAudit(db, {
+      organizationId: user.organizationId,
+      action: 'login_failed',
+      entityType: 'user',
+      entityId: user.id,
+      entityLabel: user.email,
+      reason: 'mfa_challenge_failure',
+    });
+    return { ok: false, failure: 'invalid_code' };
+  }
+
+  await finalizeLogin(user.id, user.organizationId, user.email, factor === 'recovery' ? 'mfa_recovery' : 'mfa_totp');
+  if (factor === 'recovery') {
+    await recordAudit(db, {
+      organizationId: user.organizationId,
+      action: 'update',
+      entityType: 'user_mfa',
+      entityId: user.id,
+      entityLabel: user.email,
+      reason: 'mfa_recovery_code_used',
+    });
+  }
+  await clearMfaChallenge();
+  const sessionUser = await loadSessionUser(user.id);
+  if (!sessionUser) throw new AppError('INTERNAL', 'Unable to establish the session.');
   return { ok: true, user: sessionUser };
 }
 

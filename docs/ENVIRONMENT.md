@@ -19,10 +19,10 @@ browser; everything else is server-only. **Never commit a real `.env`.**
 ## Authentication
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `AUTH_SECRET` | — | **Required**, ≥32 bytes. `openssl rand -base64 48` |
+| `AUTH_SECRET` | — | **Required**, ≥32 bytes. `openssl rand -base64 48`. Also derives the AES-256-GCM key that encrypts TOTP secrets — rotating it invalidates existing MFA enrollments (users must re-enroll). |
 | `AUTH_SESSION_TTL_HOURS` | 12 | Session lifetime |
 | `AUTH_PROVIDER` | credentials | credentials \| supabase |
-| `AUTH_MFA_ENABLED` | false | |
+| `AUTH_MFA_ENABLED` | false | Reserved flag for org-wide MFA policy. Per-user TOTP MFA (opt-in from **My Account → Security**) works regardless; no extra configuration or third-party service is required. |
 
 ## Demo / seed
 | Variable | Default | Notes |

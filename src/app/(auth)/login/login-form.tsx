@@ -1,13 +1,13 @@
 'use client';
 
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, ShieldCheck } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useActionState, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Field, Input } from '@/components/ui/input';
 import { useI18n } from '@/i18n/provider';
 import type { ActionResult } from '@/lib/errors';
-import { signInAction, type SignInPayload } from './actions';
+import { signInAction, verifyMfaAction, type SignInPayload } from './actions';
 
 export interface DemoAccount {
   email: string;
@@ -30,18 +30,82 @@ export function LoginForm({
     signInAction,
     null,
   );
+  const [mfaState, mfaAction, mfaPending] = useActionState<ActionResult<SignInPayload> | null, FormData>(
+    verifyMfaAction,
+    null,
+  );
   const [email, setEmail] = useState(demoAccounts[0]?.email ?? '');
   const [password, setPassword] = useState(demoPassword ?? '');
+  const [useRecovery, setUseRecovery] = useState(false);
+
+  const mfaRequired = state?.ok === true && state.data.mfaRequired === true;
 
   useEffect(() => {
-    if (state?.ok) {
+    // Full sign-in completes only when a step returns ok WITHOUT mfaRequired.
+    if (state?.ok && !state.data.mfaRequired) {
       router.push(state.data.redirectTo);
       router.refresh();
     }
   }, [state, router]);
 
+  useEffect(() => {
+    if (mfaState?.ok) {
+      router.push(mfaState.data.redirectTo);
+      router.refresh();
+    }
+  }, [mfaState, router]);
+
   const fieldErrors = state && !state.ok ? state.fieldErrors : undefined;
   const formError = state && !state.ok && !state.fieldErrors ? state.error.message : null;
+  const mfaError = mfaState && !mfaState.ok ? mfaState.error.message : null;
+
+  if (mfaRequired) {
+    return (
+      <form action={mfaAction} className="flex flex-col gap-4" noValidate>
+        <input type="hidden" name="redirectTo" value={redirectTo} />
+        <div className="flex flex-col items-center gap-2 text-center">
+          <span className="flex size-11 items-center justify-center rounded-full bg-[var(--color-gold-100)] text-[var(--color-gold-700)]">
+            <ShieldCheck className="size-5" aria-hidden />
+          </span>
+          <h2 className="text-[16px] font-semibold text-[var(--color-text-primary)]">{t('auth.mfaTitle')}</h2>
+          <p className="text-[12.5px] text-[var(--color-text-secondary)]">
+            {useRecovery ? t('auth.recoveryPrompt') : t('auth.mfaPrompt')}
+          </p>
+        </div>
+
+        {mfaError ? (
+          <div role="alert" className="flex items-start gap-2.5 rounded-[var(--radius-control)] border border-[var(--color-error-border)] bg-[var(--color-error-soft)] px-3.5 py-3">
+            <AlertCircle className="mt-0.5 size-4 shrink-0 text-[var(--color-error)]" aria-hidden />
+            <p className="text-[12.5px] text-[var(--color-error)]">{mfaError}</p>
+          </div>
+        ) : null}
+
+        <Field label={useRecovery ? t('auth.recoveryCode') : t('auth.mfaCode')} htmlFor="code" required>
+          <Input
+            id="code"
+            name="code"
+            inputMode={useRecovery ? 'text' : 'numeric'}
+            autoComplete="one-time-code"
+            autoFocus
+            required
+            placeholder={useRecovery ? 'XXXX-XXXX' : '000000'}
+          />
+        </Field>
+
+        <Button type="submit" size="lg" loading={mfaPending} className="mt-1 w-full">
+          {mfaPending ? t('auth.verifying') : t('auth.verify')}
+        </Button>
+
+        <button
+          type="button"
+          onClick={() => setUseRecovery((v) => !v)}
+          className="text-center text-[12px] font-medium text-[var(--color-info)] hover:underline"
+        >
+          {useRecovery ? t('auth.useAuthenticator') : t('auth.useRecoveryCode')}
+        </button>
+      </form>
+    );
+  }
 
   return (
     <form action={formAction} className="flex flex-col gap-4" noValidate>

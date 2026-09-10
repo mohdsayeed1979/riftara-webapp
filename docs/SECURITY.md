@@ -11,8 +11,28 @@ Aligned to BRD §148-149.
 - **Login monitoring & lockout:** failed attempts recorded in `login_attempts`;
   the account locks for 15 minutes after 5 failures; response timing does not
   reveal whether an account exists.
-- MFA-ready (`AUTH_MFA_ENABLED`); auth provider swappable to Supabase Auth
-  without touching the rest of the app.
+- **Multi-factor authentication (TOTP).** Users can enable a second factor from
+  **My Account → Security**. Enrollment issues a standard `otpauth://` secret
+  (RFC 6238, SHA-1/6-digit/30s) shown as a QR code and a manual key, and is only
+  activated after the user proves possession with a valid code. At sign-in a
+  correct password with MFA enabled does **not** create a session — it issues a
+  short-lived (5-minute), signed, HttpOnly MFA-challenge cookie (carrying only
+  the user id and org, never the password); the session is created only after
+  the TOTP or a recovery code verifies. TOTP secrets are encrypted at rest with
+  AES-256-GCM under a key derived from `AUTH_SECRET`; recovery codes are stored
+  only as SHA-256 hashes. Verification is rate-limited (5/min per user), codes
+  are compared in constant time, recovery codes are one-time-use, and the flow
+  never reveals whether a secret exists. Auth provider remains swappable to
+  Supabase Auth without touching the rest of the app.
+- **MFA administration.** A user manages their own MFA (enable, disable,
+  regenerate recovery codes — each requiring a current code). An administrator
+  with `users:manage` can reset (disable) another in-org user's MFA after a lost
+  device; they cannot enroll on someone's behalf. Every sensitive MFA event is
+  written to the audit trail via `reason` on a standard action: `mfa_enabled`,
+  `mfa_disabled`, `mfa_disabled_by_admin`, `mfa_recovery_regenerated`,
+  `mfa_recovery_code_used`, and login challenge success/failure
+  (`mfa_challenge_success` / `mfa_challenge_failure`). Secrets, recovery codes,
+  passwords and tokens are never logged.
 
 ## Authorization
 - Permission-based RBAC with data-level scoping (see [RBAC.md](RBAC.md)),

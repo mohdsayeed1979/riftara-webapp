@@ -18,6 +18,7 @@ contract number, invoice number) are unique columns, never primary keys.
 | `operations.ts` | maintenance_assets, work_orders, maintenance_costs, preventive_maintenance_schedules, operating_expenses, budgets, budget_lines, valuations, performance_snapshots, vacancy_periods |
 | `marketing.ts` | marketing_platforms, campaigns, campaign_metrics, marketing_attributions, consents |
 | `platform.ts` | documents, notifications, integrations, integration_logs, webhooks, webhook_deliveries, settings, business_rule_configs, kpi_definitions, kpi_thresholds, saved_views, import_batches, import_errors, report_runs, report_schedules, report_schedule_runs, website_listings |
+| `org.ts` (auth/RBAC) | organizations, users, user_mfa, mfa_recovery_codes, roles, permissions, role_permissions, user_roles, user_scopes, sessions, login_attempts, audit_logs |
 
 ## Property hierarchy (BRD §4)
 
@@ -72,6 +73,23 @@ property). They are **computed from the transactional data** at seed/rollup
 time, so trend charts reconcile with live figures. Reports additionally freeze a
 full data snapshot in `report_runs.snapshot` (BRD §118) so a generated report
 never changes when live data moves on.
+
+## Multi-factor authentication (BRD §148-149)
+
+Two additive tables back TOTP MFA (migration **`0003_vengeful_blizzard`**, purely
+additive — two `CREATE TABLE`s, their FKs and indexes; no changes to existing
+tables). `users.mfa_enabled` already existed and is set true only on activation.
+
+- **`user_mfa`** — one row per user (`user_id` unique): `encrypted_secret` (the
+  TOTP secret, AES-256-GCM encrypted under an `AUTH_SECRET`-derived key — never
+  stored in clear), `activated_at` (null until the first code verifies),
+  `last_used_at`. Soft-deletable.
+- **`mfa_recovery_codes`** — one-time recovery codes stored only as SHA-256
+  hashes (`code_hash`), with `used_at` marking consumption. Cascade-deleted with
+  the `user_mfa` row.
+
+> **Production note:** migration `0003` is additive and was applied to the local
+> database only. Like `0002`, it has **not** been applied to Supabase production.
 
 ## Scheduled reporting (BRD §117)
 

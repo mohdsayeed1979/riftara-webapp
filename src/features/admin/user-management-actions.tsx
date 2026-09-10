@@ -2,12 +2,12 @@
 
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
-import { KeyRound, Power, ShieldCheck } from 'lucide-react';
+import { KeyRound, Power, ShieldCheck, ShieldOff } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogBody, DialogClose, DialogContent, DialogFooter, DialogHeader, DialogTrigger } from '@/components/ui/dialog';
 import { Field, Input } from '@/components/ui/input';
-import { adminResetPasswordAction, setUserActiveAction, setUserRolesAction } from '@/app/(app)/users/actions';
+import { adminResetMfaAction, adminResetPasswordAction, setUserActiveAction, setUserRolesAction } from '@/app/(app)/users/actions';
 import type { AssignableRoleOption } from './user-form-dialog';
 
 /** Manage the target user's role set (atomic replace, escalation-guarded). */
@@ -103,6 +103,36 @@ export function ResetPasswordButton({ userId }: { userId: string }) {
         <DialogFooter>
           <DialogClose asChild><Button type="button" variant="ghost">Cancel</Button></DialogClose>
           <Button type="button" loading={pending} onClick={submit} disabled={!password}>Reset Password</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Administrator MFA reset — disables the target user's two-factor (e.g. lost device). */
+export function ResetMfaButton({ userId }: { userId: string }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [pending, start] = useTransition();
+
+  function submit() {
+    start(async () => {
+      const result = await adminResetMfaAction(userId);
+      if (result.ok) { toast.success('Two-factor authentication was reset for this user.'); setOpen(false); router.refresh(); }
+      else toast.error(result.error.message);
+    });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="secondary" size="sm"><ShieldOff />Reset MFA</Button>
+      </DialogTrigger>
+      <DialogContent size="sm">
+        <DialogHeader title="Reset Two-Factor Authentication" description="Disables the user's two-factor authentication so they can sign in with their password alone and re-enroll. Use this only after verifying the user's identity." />
+        <DialogFooter>
+          <DialogClose asChild><Button type="button" variant="ghost">Cancel</Button></DialogClose>
+          <Button type="button" variant="destructive" loading={pending} onClick={submit}>Reset MFA</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -150,3 +150,17 @@ export async function adminResetPasswordAction(userId: string, newPassword: stri
     return actionFailure(error);
   }
 }
+
+/** Administrator resets (disables) a user's MFA — e.g. after a lost device. */
+export async function adminResetMfaAction(userId: string): Promise<ActionResult<{ ok: true }>> {
+  try {
+    if (!isUuid(userId)) return { ok: false, error: { code: 'NOT_FOUND', message: 'User not found.' } };
+    const actor = await requirePermission('users:manage');
+    const { adminDisableMfa } = await import('@/services/mfa-service');
+    const result = await adminDisableMfa(actor, userId);
+    try { revalidatePath(`/users/${userId}`); } catch { /* cache hint */ }
+    return actionSuccess(result);
+  } catch (error) {
+    return actionFailure(error);
+  }
+}

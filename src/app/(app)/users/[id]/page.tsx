@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
 import { DetailList, DetailRow, MetaItem, PageHeader } from '@/components/ui/page';
 import { UserFormDialog } from '@/features/admin/user-form-dialog';
-import { ManageRolesButton, ResetPasswordButton, StatusToggleButton } from '@/features/admin/user-management-actions';
+import { ManageRolesButton, ResetMfaButton, ResetPasswordButton, StatusToggleButton } from '@/features/admin/user-management-actions';
 import { ScopeAssignmentDialog } from '@/features/admin/scope-assignment-dialog';
 import { can, requirePermission } from '@/lib/auth/guard';
 import { isUuid } from '@/lib/utils';
@@ -55,6 +55,7 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
             {canManage ? <ManageRolesButton userId={id} roles={assignableRoles} currentRoleIds={currentRoleIds} /> : null}
             {canManage ? <ScopeAssignmentDialog userId={id} properties={assignableScopes.properties} cities={assignableScopes.cities} currentPropertyIds={currentScopes.propertyIds} currentCityIds={currentScopes.cityIds} /> : null}
             {canManage ? <ResetPasswordButton userId={id} /> : null}
+            {canManage && user.mfaEnabled ? <ResetMfaButton userId={id} /> : null}
             {canEdit ? <StatusToggleButton userId={id} isActive={user.isActive} isSelf={id === actor.id} /> : null}
           </>
         }
