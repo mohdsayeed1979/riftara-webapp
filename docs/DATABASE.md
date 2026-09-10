@@ -17,7 +17,7 @@ contract number, invoice number) are unique columns, never primary keys.
 | `leasing.ts` | tenants, contracts, contract_versions, renewals, handovers, payment_schedules, invoices, payments, payment_allocations, tenant_ledger_entries, collection_actions |
 | `operations.ts` | maintenance_assets, work_orders, maintenance_costs, preventive_maintenance_schedules, operating_expenses, budgets, budget_lines, valuations, performance_snapshots, vacancy_periods |
 | `marketing.ts` | marketing_platforms, campaigns, campaign_metrics, marketing_attributions, consents |
-| `platform.ts` | documents, notifications, integrations, integration_logs, webhooks, webhook_deliveries, settings, business_rule_configs, kpi_definitions, kpi_thresholds, saved_views, import_batches, import_errors, report_runs, website_listings |
+| `platform.ts` | documents, notifications, integrations, integration_logs, webhooks, webhook_deliveries, settings, business_rule_configs, kpi_definitions, kpi_thresholds, saved_views, import_batches, import_errors, report_runs, report_schedules, report_schedule_runs, website_listings |
 
 ## Property hierarchy (BRD §4)
 
@@ -72,6 +72,33 @@ property). They are **computed from the transactional data** at seed/rollup
 time, so trend charts reconcile with live figures. Reports additionally freeze a
 full data snapshot in `report_runs.snapshot` (BRD §118) so a generated report
 never changes when live data moves on.
+
+## Scheduled reporting (BRD §117)
+
+Two additive tables support scheduled report generation:
+
+- **`report_schedules`** — what/when to generate: `report_type`, frozen `config`
+  (period, optional property scope, commentary), `frequency`
+  (daily/weekly/monthly), `hour`, `day_of_week`, `day_of_month`, `timezone`
+  (defaults to the organization's timezone), `is_active`, `delivery_method`
+  (currently `in_app`), `next_run_at`/`last_run_at`/`last_status`, and
+  `created_by_user_id` (the identity scheduled runs execute as). Soft-deletable
+  via `deleted_at`.
+- **`report_schedule_runs`** — one row per execution, success *or* failure
+  (`report_runs` only holds successful snapshots, so failures need their own
+  ledger): `status`, `duration_ms`, `report_run_id` (the produced snapshot, when
+  successful) and `failure_message`.
+
+Both are indexed by organization; `report_schedules` also has a
+`(is_active, next_run_at)` due-detection index. Introduced by migration
+**`0002_ancient_amphibian`** — purely additive (two `CREATE TABLE`s, their FKs
+and indexes; no changes to existing tables). Idempotency is enforced in the
+service by advancing `next_run_at` to claim an occurrence before running it.
+
+> **Production note:** migration `0002` is additive and was verified locally
+> (applied automatically by the test PGlite migrator). It has **not** been
+> applied to the Supabase production database; apply it with the standard
+> migration procedure below during a controlled deploy.
 
 ## Migrations
 

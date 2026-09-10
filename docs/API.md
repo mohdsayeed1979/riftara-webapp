@@ -55,6 +55,14 @@ is swappable for Redis behind a load balancer.
 | POST | `/api/v1/contracts/:id/sign` | `contracts:edit` | Sign & activate a contract (BR-010) |
 | POST | `/api/v1/reports/generate` | `reports:view` (+create/export) | Generate & stream an executive PDF |
 | GET | `/api/v1/reports/:id/download` | `reports:view` | Re-render a stored report from its snapshot |
+| GET | `/api/v1/reports` | `reports:view` | Report catalog: available report types, frequencies & periods |
+| GET | `/api/v1/report-schedules` | `reports:view` | List scheduled reports for the organization |
+| POST | `/api/v1/report-schedules` | `reports:create` | Create a scheduled report (BRD §117) |
+| GET | `/api/v1/report-schedules/:id` | `reports:view` | Fetch one schedule |
+| PATCH | `/api/v1/report-schedules/:id` | `reports:create` | Edit or enable/disable a schedule |
+| DELETE | `/api/v1/report-schedules/:id` | `reports:create` | Soft-delete (deactivate) a schedule |
+| GET | `/api/v1/report-schedules/:id/history` | `reports:view` | Execution history (success & failure) |
+| POST | `/api/v1/report-schedules/:id/run` | `reports:create` | Run a schedule now (as the caller) |
 | POST | `/api/v1/notifications/read-all` | any authenticated | Mark notifications read |
 | POST | `/api/v1/notifications/:id/read` | any authenticated | Mark one notification read |
 | POST | `/api/auth/logout` | any authenticated | End the session |
@@ -84,6 +92,42 @@ users; warranty alerts target `assets:view`. The **Compliance Center**
 documents, asset warranties and contracts — organization-scoped, RBAC-gated,
 property-data-scoped, with document confidentiality enforced and no `storageKey`/
 path exposure. Reuses existing fields only; **no migration**.
+
+### Scheduled reporting & report execution (BRD §112, §117)
+
+The **report catalog** (`GET /api/v1/reports`) registers the seven existing
+executive report types — no duplicate report definitions are introduced — plus
+the supported frequencies (`daily`, `weekly`, `monthly`) and reporting periods
+(`3m`, `6m`, `12m`, `ytd`).
+
+**Scheduled reports** (`report_schedules`) capture *what* to generate (report
+type + a frozen config: period, optional property scope, commentary) and *when*
+(frequency, hour, day-of-week/day-of-month, timezone — defaulting to the
+organization's configured timezone). The existing daily notification cron
+(`GET /api/cron/notifications`) runs `runDueReportSchedules()` after notification
+generation; there is no separate cron framework.
+
+Authorization is enforced end to end. Scheduled execution loads the schedule's
+**creator** via `loadSessionUser` at run time and generates the report under the
+creator's *live* permissions and property data scope, re-checking
+`reports:create`/`reports:export`; it never trusts a client-supplied
+organization id or property scope. **Run-now** executes under the *caller's* own
+live session instead, so neither path can surface data the acting user could not
+generate manually (BR-016, BRD §126). Each occurrence is **idempotent**: the
+scheduler claims the slot by advancing `next_run_at` before executing, so a
+retried or overlapping cron never generates the same occurrence twice.
+
+Every execution — success or failure — is recorded in `report_schedule_runs`
+(status, duration, `report_run_id`, failure message). A failed run raises a
+`report_failed` notification targeted at `reports:view` holders; successful runs
+are intentionally silent to avoid noise. Schedule create/update/enable/disable/
+delete, manual runs and scheduled failures are written to the audit trail.
+
+**Delivery is in-app only.** Generated reports are available in the app and
+downloadable from execution history via the existing report download route; the
+architecture is delivery-ready (execution history + per-run status + a
+`delivery_method` field) but external email/SMS/WhatsApp delivery is **not
+implemented**.
 
 ### Planned resource routes (BRD §110)
 

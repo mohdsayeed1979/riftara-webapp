@@ -15,6 +15,13 @@
       "when": 1788973765118,
       "tag": "0001_premium_baron_strucker",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789038946407,
+      "tag": "0002_ancient_amphibian",
+      "breakpoints": true
     }
   ]
 }

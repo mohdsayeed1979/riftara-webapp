@@ -392,6 +392,80 @@ export const reportRuns = pgTable(
 );
 
 /**
+ * Recurring report schedules (BRD 117). A schedule captures WHAT to generate
+ * (report type + frozen filter config) and WHEN (frequency in the org timezone).
+ * It executes with the creating user's live permissions and data scope, so a
+ * schedule can never surface data the creator could not generate manually.
+ */
+export const reportSchedules = pgTable(
+  'report_schedules',
+  {
+    id: pk(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    name: varchar('name', { length: 200 }).notNull(),
+    reportType: varchar('report_type', { length: 64 }).notNull(),
+    /** daily | weekly | monthly */
+    frequency: varchar('frequency', { length: 16 }).notNull().default('monthly'),
+    /** Local hour of day (0-23) in the schedule timezone. */
+    hour: integer('hour').notNull().default(3),
+    /** 0-6 (Sun-Sat) for weekly; null otherwise. */
+    dayOfWeek: integer('day_of_week'),
+    /** 1-28 for monthly; null otherwise. */
+    dayOfMonth: integer('day_of_month'),
+    timezone: varchar('timezone', { length: 64 }).notNull().default('Asia/Riyadh'),
+    isActive: boolean('is_active').notNull().default(true),
+    /** Frozen generation config: { period, propertyId?, commentary? }. */
+    config: jsonb('config').$type<Record<string, unknown>>().notNull().default({}),
+    format: varchar('format', { length: 16 }).notNull().default('pdf'),
+    /** in_app now; email/sms/whatsapp are future delivery methods. */
+    deliveryMethod: varchar('delivery_method', { length: 16 }).notNull().default('in_app'),
+    /** Recipient config for future external delivery (unused in-app). */
+    recipients: jsonb('recipients').$type<string[]>().notNull().default([]),
+    nextRunAt: timestamp('next_run_at', { withTimezone: true }).notNull(),
+    lastRunAt: timestamp('last_run_at', { withTimezone: true }),
+    lastStatus: varchar('last_status', { length: 16 }),
+    createdByUserId: uuid('created_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    updatedByUserId: uuid('updated_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    isDemo: isDemo(),
+    ...timestamps,
+  },
+  (t) => [
+    index('report_schedules_org_idx').on(t.organizationId),
+    index('report_schedules_due_idx').on(t.isActive, t.nextRunAt),
+  ],
+);
+
+/** Execution history for scheduled (and manual) report runs (BRD 117). Records
+ *  successes AND failures, so operators can see and diagnose scheduled runs. */
+export const reportScheduleRuns = pgTable(
+  'report_schedule_runs',
+  {
+    id: pk(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    scheduleId: uuid('schedule_id')
+      .notNull()
+      .references(() => reportSchedules.id, { onDelete: 'cascade' }),
+    reportType: varchar('report_type', { length: 64 }).notNull(),
+    /** success | failed */
+    status: varchar('status', { length: 16 }).notNull(),
+    format: varchar('format', { length: 16 }).notNull().default('pdf'),
+    durationMs: integer('duration_ms'),
+    /** Link to the generated report_runs row on success (null on failure). */
+    reportRunId: uuid('report_run_id'),
+    failureMessage: text('failure_message'),
+    createdAt: timestamps.createdAt,
+  },
+  (t) => [
+    index('report_schedule_runs_schedule_idx').on(t.scheduleId, t.createdAt),
+    index('report_schedule_runs_org_idx').on(t.organizationId),
+  ],
+);
+
+/**
  * Denormalised website listing projection (BRD 88, BR-009). The publishing
  * service rewrites rows here whenever unit status or pricing changes, so the
  * corporate website reads one table instead of joining the operational model.

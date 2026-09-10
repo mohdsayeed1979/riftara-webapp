@@ -37,6 +37,11 @@ The seed uses a fixed-seed PRNG, so runs are reproducible. The test harness
 applies constraints and seeds.
 
 ## Result
-44 tests across 3 files, all passing. Add UI end-to-end coverage (Playwright)
-as a follow-up; the acceptance scenarios are already covered at the service
-layer.
+368 tests across 27 files, all passing. Coverage has grown well beyond the three
+foundational files above to include module suites (documents, global search,
+compliance, scheduled reporting, …), each exercising service logic, RBAC/data
+scope, organization isolation and the API routes. Scheduled reporting
+(`tests/report-schedules.test.ts`) additionally covers timezone-aware next-run
+computation, idempotent per-occurrence execution, success/failure recording and
+run-now authorization. Add UI end-to-end coverage (Playwright) as a follow-up;
+the acceptance scenarios are already covered at the service layer.

@@ -86,6 +86,25 @@ Dashboards read live aggregates for current figures and pre-computed monthly
 **snapshots** (`performance_snapshots`) for trend charts, so a 12-month chart is
 one indexed query rather than twelve aggregations.
 
+## Scheduled work (single cron)
+
+Background automation runs off **one** Vercel Cron entry
+(`GET /api/cron/notifications`, `CRON_SECRET` fail-closed). It first generates
+notifications for every organization, then calls `runDueReportSchedules()`,
+which selects active, non-deleted schedules whose `next_run_at` has passed and
+executes each one. New periodic work is added as another step in this job rather
+than as a new scheduler.
+
+Scheduled report execution reuses the existing `report-service`
+(`generateReport` freezes a `report_runs` snapshot) and the RBAC/metric-scope
+layer: it builds the actor from a **live** `loadSessionUser` load — the
+schedule's creator for cron runs, the caller for run-now — so a schedule can
+never widen data access beyond what that user has at execution time. Each
+occurrence is claimed by advancing `next_run_at` before running, making the job
+safe to retry (idempotent per occurrence). Delivery is in-app only; the model
+(`delivery_method`, execution history) is delivery-ready but external channels
+are not implemented.
+
 ## Database driver abstraction
 
 `src/db/client.ts` exposes a driver-agnostic `Database` handle. Both supported

@@ -88,6 +88,16 @@ aging, maintenance, property ranking, tenant concentration, key risks,
 management actions). Generated reports are listed and re-downloadable from their
 frozen snapshot.
 
+The **Scheduled Reports** tab lets you have a report generated automatically on
+a **daily**, **weekly** or **monthly** cadence. Set the report type, period,
+scope, time (hour, and day-of-week/day-of-month), and timezone (defaulting to
+your organization's). Scheduled reports run with *your* access rights, so a
+schedule never exposes data you could not generate yourself. Use **Run Now** to
+generate on demand, enable/disable a schedule, or open **View History** to see
+each run's status, duration and any failure reason. Reports are made available
+in-app and are downloadable; external email/SMS/WhatsApp delivery is not yet
+enabled. A failed run raises a notification for report viewers.
+
 ## Marketing
 Attribution across channels: spend, leads, CPL, ROAS, leads-by-channel, trend
 and campaign performance.

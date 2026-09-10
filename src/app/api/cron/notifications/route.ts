@@ -3,6 +3,7 @@ import type { NextRequest } from 'next/server';
 import { apiError, apiSuccess } from '@/lib/api/response';
 import { AppError } from '@/lib/errors';
 import { generateAllNotificationsForAllOrganizations } from '@/services/notification-service';
+import { runDueReportSchedules } from '@/services/report-schedule-service';
 
 // This route uses node:crypto and the postgres driver, so it must run on the
 // Node.js serverless runtime (never the Edge runtime).
@@ -34,8 +35,14 @@ function authorized(request: NextRequest): boolean {
 export async function GET(request: NextRequest) {
   try {
     if (!authorized(request)) throw new AppError('UNAUTHENTICATED', 'Invalid or missing cron credentials.', { status: 401 });
-    const result = await generateAllNotificationsForAllOrganizations();
-    return apiSuccess(result);
+    const notifications = await generateAllNotificationsForAllOrganizations();
+    // Due scheduled reports run after notification generation, in the same daily
+    // job. Idempotent per occurrence: each schedule claims its slot by advancing
+    // next_run_at before executing, so a retried cron never double-generates.
+    const scheduledReports = await runDueReportSchedules();
+    // Keep the existing notification fields at the top level (backward-compatible)
+    // and add the scheduled-report execution summary alongside them.
+    return apiSuccess({ ...notifications, scheduledReports });
   } catch (error) {
     return apiError(error);
   }
