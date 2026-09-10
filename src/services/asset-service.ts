@@ -145,6 +145,8 @@ export interface AssetListItem {
   usefulLifeYears: number | null;
   residualValue: number | null;
   depreciationMethod: string | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export async function listAssets(
@@ -193,6 +195,8 @@ export async function listAssets(
         usefulLifeYears: maintenanceAssets.usefulLifeYears,
         residualValue: maintenanceAssets.residualValue,
         depreciationMethod: maintenanceAssets.depreciationMethod,
+        createdAt: maintenanceAssets.createdAt,
+        updatedAt: maintenanceAssets.updatedAt,
       })
       .from(maintenanceAssets)
       .innerJoin(properties, eq(properties.id, maintenanceAssets.propertyId))
@@ -212,6 +216,7 @@ export interface AssetKpis {
   total: number;
   operational: number;
   underMaintenance: number;
+  faulty: number;
   decommissioned: number;
   purchaseValue: number;
   lifetimeMaintenanceCost: number;
@@ -224,6 +229,7 @@ export async function getAssetKpis(scope: AssetScope): Promise<AssetKpis> {
       total: sql<number>`count(*)::int`,
       operational: sql<number>`count(*) filter (where ${maintenanceAssets.status} = 'operational')::int`,
       underMaintenance: sql<number>`count(*) filter (where ${maintenanceAssets.status} = 'under_maintenance')::int`,
+      faulty: sql<number>`count(*) filter (where ${maintenanceAssets.status} = 'faulty')::int`,
       decommissioned: sql<number>`count(*) filter (where ${maintenanceAssets.status} = 'decommissioned')::int`,
       purchaseValue: sql<number>`coalesce(sum(${maintenanceAssets.purchaseCost}), 0)::float8`,
       lifetimeMaintenanceCost: sql<number>`coalesce(sum(${maintenanceAssets.lifetimeMaintenanceCost}), 0)::float8`,
@@ -234,6 +240,7 @@ export async function getAssetKpis(scope: AssetScope): Promise<AssetKpis> {
     total: Number(row?.total ?? 0),
     operational: Number(row?.operational ?? 0),
     underMaintenance: Number(row?.underMaintenance ?? 0),
+    faulty: Number(row?.faulty ?? 0),
     decommissioned: Number(row?.decommissioned ?? 0),
     purchaseValue: Number(row?.purchaseValue ?? 0),
     lifetimeMaintenanceCost: Number(row?.lifetimeMaintenanceCost ?? 0),
@@ -806,4 +813,257 @@ export async function disposeAsset(
     });
     return { id: assetId, status: 'decommissioned' };
   });
+}
+
+/* -------------------------------------------------------------------------- */
+/* Phase 10C — portfolio analytics & export support (read-only)                */
+/* -------------------------------------------------------------------------- */
+
+export interface AssetDepreciationTotals {
+  totalPurchaseCost: number;
+  totalAccumulatedDepreciation: number;
+  totalNetBookValue: number;
+  depreciableAssets: number;
+  fullyDepreciatedAssets: number;
+  missingInputs: number;
+  approachingFullDepreciation: number;
+  byProperty: Array<{ propertyId: string; propertyName: string; purchaseCost: number; accumulatedDepreciation: number; netBookValue: number }>;
+  byAssetType: Array<{ assetType: string; purchaseCost: number; accumulatedDepreciation: number; netBookValue: number }>;
+}
+
+/**
+ * Portfolio depreciation totals — a CALCULATED read-model. Straight-line
+ * depreciation is time-based per asset (it cannot be a pure SQL aggregate), so
+ * this reads the depreciation inputs for the org's assets in a SINGLE query and
+ * reduces them in memory via {@link calculateAssetDepreciation} (no second
+ * engine, no N+1). Nothing is persisted or posted to any ledger.
+ */
+export async function getAssetDepreciationTotals(scope: AssetScope, asOf: Date = new Date()): Promise<AssetDepreciationTotals> {
+  const db = await getDb();
+  const rows = await db
+    .select({
+      purchaseCost: maintenanceAssets.purchaseCost,
+      purchaseDate: maintenanceAssets.purchaseDate,
+      usefulLifeYears: maintenanceAssets.usefulLifeYears,
+      residualValue: maintenanceAssets.residualValue,
+      depreciationMethod: maintenanceAssets.depreciationMethod,
+      status: maintenanceAssets.status,
+      propertyId: maintenanceAssets.propertyId,
+      propertyName: properties.nameEn,
+      assetType: maintenanceAssets.assetType,
+    })
+    .from(maintenanceAssets)
+    .innerJoin(properties, eq(properties.id, maintenanceAssets.propertyId))
+    .where(and(...scopeWhere(scope)));
+
+  const totals: AssetDepreciationTotals = {
+    totalPurchaseCost: 0,
+    totalAccumulatedDepreciation: 0,
+    totalNetBookValue: 0,
+    depreciableAssets: 0,
+    fullyDepreciatedAssets: 0,
+    missingInputs: 0,
+    approachingFullDepreciation: 0,
+    byProperty: [],
+    byAssetType: [],
+  };
+  const byProperty = new Map<string, { propertyId: string; propertyName: string; purchaseCost: number; accumulatedDepreciation: number; netBookValue: number }>();
+  const byType = new Map<string, { assetType: string; purchaseCost: number; accumulatedDepreciation: number; netBookValue: number }>();
+
+  for (const row of rows) {
+    const d = calculateAssetDepreciation(row, asOf);
+    totals.totalPurchaseCost += Number(row.purchaseCost ?? 0);
+    if (!d.depreciable) {
+      totals.missingInputs += 1;
+      continue;
+    }
+    totals.depreciableAssets += 1;
+    totals.totalAccumulatedDepreciation += d.accumulatedDepreciation;
+    totals.totalNetBookValue += d.netBookValue;
+    if (d.fullyDepreciated) totals.fullyDepreciatedAssets += 1;
+    else if (d.depreciableBase > 0 && d.accumulatedDepreciation / d.depreciableBase >= 0.9) totals.approachingFullDepreciation += 1;
+
+    const p = byProperty.get(row.propertyId) ?? { propertyId: row.propertyId, propertyName: row.propertyName, purchaseCost: 0, accumulatedDepreciation: 0, netBookValue: 0 };
+    p.purchaseCost += d.purchaseCost;
+    p.accumulatedDepreciation += d.accumulatedDepreciation;
+    p.netBookValue += d.netBookValue;
+    byProperty.set(row.propertyId, p);
+
+    const t = byType.get(row.assetType) ?? { assetType: row.assetType, purchaseCost: 0, accumulatedDepreciation: 0, netBookValue: 0 };
+    t.purchaseCost += d.purchaseCost;
+    t.accumulatedDepreciation += d.accumulatedDepreciation;
+    t.netBookValue += d.netBookValue;
+    byType.set(row.assetType, t);
+  }
+
+  const r2 = (n: number) => round2(n);
+  totals.totalPurchaseCost = r2(totals.totalPurchaseCost);
+  totals.totalAccumulatedDepreciation = r2(totals.totalAccumulatedDepreciation);
+  totals.totalNetBookValue = r2(totals.totalNetBookValue);
+  totals.byProperty = [...byProperty.values()].map((p) => ({ ...p, purchaseCost: r2(p.purchaseCost), accumulatedDepreciation: r2(p.accumulatedDepreciation), netBookValue: r2(p.netBookValue) })).sort((a, b) => b.netBookValue - a.netBookValue);
+  totals.byAssetType = [...byType.values()].map((t) => ({ ...t, purchaseCost: r2(t.purchaseCost), accumulatedDepreciation: r2(t.accumulatedDepreciation), netBookValue: r2(t.netBookValue) })).sort((a, b) => b.netBookValue - a.netBookValue);
+  return totals;
+}
+
+export interface AssetLifecycleBreakdown {
+  byStatus: Array<{ key: string; count: number }>;
+  byAssetType: Array<{ key: string; count: number }>;
+  byProperty: Array<{ propertyId: string; propertyName: string; count: number }>;
+  byBuilding: Array<{ buildingId: string; buildingName: string; count: number }>;
+  warranty: { valid: number; expiringSoon: number; expired: number; none: number };
+  missingDepreciationConfig: number;
+}
+
+/** Lifecycle/analytics breakdowns via server-side aggregation (group-by). */
+export async function getAssetLifecycleBreakdown(scope: AssetScope): Promise<AssetLifecycleBreakdown> {
+  const db = await getDb();
+  const base = scopeWhere(scope);
+
+  const [byStatus, byType, byProperty, byBuilding, summaryRows] = await Promise.all([
+    db.select({ key: maintenanceAssets.status, count: count() }).from(maintenanceAssets).where(and(...base)).groupBy(maintenanceAssets.status),
+    db.select({ key: maintenanceAssets.assetType, count: count() }).from(maintenanceAssets).where(and(...base)).groupBy(maintenanceAssets.assetType).orderBy(desc(count())),
+    db.select({ propertyId: maintenanceAssets.propertyId, propertyName: properties.nameEn, count: count() }).from(maintenanceAssets).innerJoin(properties, eq(properties.id, maintenanceAssets.propertyId)).where(and(...base)).groupBy(maintenanceAssets.propertyId, properties.nameEn).orderBy(desc(count())),
+    db.select({ buildingId: buildings.id, buildingName: buildings.nameEn, count: count() }).from(maintenanceAssets).innerJoin(buildings, eq(buildings.id, maintenanceAssets.buildingId)).where(and(...base)).groupBy(buildings.id, buildings.nameEn).orderBy(desc(count())),
+    db
+      .select({
+        valid: sql<number>`count(*) filter (where ${maintenanceAssets.warrantyExpiryDate} > (CURRENT_DATE + interval '90 days'))::int`,
+        expiringSoon: sql<number>`count(*) filter (where ${maintenanceAssets.warrantyExpiryDate} >= CURRENT_DATE and ${maintenanceAssets.warrantyExpiryDate} <= (CURRENT_DATE + interval '90 days'))::int`,
+        expired: sql<number>`count(*) filter (where ${maintenanceAssets.warrantyExpiryDate} < CURRENT_DATE)::int`,
+        none: sql<number>`count(*) filter (where ${maintenanceAssets.warrantyExpiryDate} is null)::int`,
+        missingDepreciationConfig: sql<number>`count(*) filter (where ${maintenanceAssets.usefulLifeYears} is null)::int`,
+      })
+      .from(maintenanceAssets)
+      .where(and(...base)),
+  ]);
+  const summary = summaryRows[0];
+
+  return {
+    byStatus: byStatus.map((r) => ({ key: r.key, count: Number(r.count) })),
+    byAssetType: byType.map((r) => ({ key: r.key, count: Number(r.count) })),
+    byProperty: byProperty.map((r) => ({ propertyId: r.propertyId, propertyName: r.propertyName, count: Number(r.count) })),
+    byBuilding: byBuilding.map((r) => ({ buildingId: r.buildingId, buildingName: r.buildingName, count: Number(r.count) })),
+    warranty: { valid: Number(summary?.valid ?? 0), expiringSoon: Number(summary?.expiringSoon ?? 0), expired: Number(summary?.expired ?? 0), none: Number(summary?.none ?? 0) },
+    missingDepreciationConfig: Number(summary?.missingDepreciationConfig ?? 0),
+  };
+}
+
+export interface AssetMaintenanceAnalytics {
+  totalSpend: number;
+  openWorkOrders: number;
+  completedWorkOrders: number;
+  topAssets: Array<{ assetId: string; code: string; nameEn: string; totalCost: number }>;
+  byProperty: Array<{ propertyId: string; propertyName: string; totalCost: number }>;
+  byAssetType: Array<{ assetType: string; totalCost: number }>;
+}
+
+/** Maintenance-cost analytics from the existing work-order/cost relationships. */
+export async function getAssetMaintenanceAnalytics(scope: AssetScope): Promise<AssetMaintenanceAnalytics> {
+  const db = await getDb();
+  const propScope = scope.allowedPropertyIds?.length ? inArray(maintenanceAssets.propertyId, scope.allowedPropertyIds) : undefined;
+  const costWhere = and(eq(maintenanceCosts.organizationId, scope.organizationId), isNull(maintenanceAssets.deletedAt), propScope);
+
+  const [spendRows, woRows, topAssets, byProperty, byType] = await Promise.all([
+    db.select({ total: sql<number>`coalesce(sum(${maintenanceCosts.amount}), 0)::float8` }).from(maintenanceCosts).innerJoin(maintenanceAssets, eq(maintenanceAssets.id, maintenanceCosts.assetId)).where(costWhere),
+    db
+      .select({
+        open: sql<number>`count(*) filter (where ${workOrders.status} in ('open','assigned','in_progress','pending'))::int`,
+        completed: sql<number>`count(*) filter (where ${workOrders.status} = 'completed')::int`,
+      })
+      .from(workOrders)
+      .innerJoin(maintenanceAssets, eq(maintenanceAssets.id, workOrders.assetId))
+      .where(and(eq(workOrders.organizationId, scope.organizationId), isNull(workOrders.deletedAt), isNull(maintenanceAssets.deletedAt), propScope)),
+    db.select({ assetId: maintenanceAssets.id, code: maintenanceAssets.code, nameEn: maintenanceAssets.nameEn, totalCost: sql<number>`coalesce(sum(${maintenanceCosts.amount}), 0)::float8` }).from(maintenanceCosts).innerJoin(maintenanceAssets, eq(maintenanceAssets.id, maintenanceCosts.assetId)).where(costWhere).groupBy(maintenanceAssets.id, maintenanceAssets.code, maintenanceAssets.nameEn).orderBy(desc(sql`sum(${maintenanceCosts.amount})`)).limit(10),
+    db.select({ propertyId: maintenanceAssets.propertyId, propertyName: properties.nameEn, totalCost: sql<number>`coalesce(sum(${maintenanceCosts.amount}), 0)::float8` }).from(maintenanceCosts).innerJoin(maintenanceAssets, eq(maintenanceAssets.id, maintenanceCosts.assetId)).innerJoin(properties, eq(properties.id, maintenanceAssets.propertyId)).where(costWhere).groupBy(maintenanceAssets.propertyId, properties.nameEn).orderBy(desc(sql`sum(${maintenanceCosts.amount})`)),
+    db.select({ assetType: maintenanceAssets.assetType, totalCost: sql<number>`coalesce(sum(${maintenanceCosts.amount}), 0)::float8` }).from(maintenanceCosts).innerJoin(maintenanceAssets, eq(maintenanceAssets.id, maintenanceCosts.assetId)).where(costWhere).groupBy(maintenanceAssets.assetType).orderBy(desc(sql`sum(${maintenanceCosts.amount})`)),
+  ]);
+
+  return {
+    totalSpend: Number(spendRows[0]?.total ?? 0),
+    openWorkOrders: Number(woRows[0]?.open ?? 0),
+    completedWorkOrders: Number(woRows[0]?.completed ?? 0),
+    topAssets: topAssets.map((r) => ({ assetId: r.assetId, code: r.code, nameEn: r.nameEn, totalCost: Number(r.totalCost) })),
+    byProperty: byProperty.map((r) => ({ propertyId: r.propertyId, propertyName: r.propertyName, totalCost: Number(r.totalCost) })),
+    byAssetType: byType.map((r) => ({ assetType: r.assetType, totalCost: Number(r.totalCost) })),
+  };
+}
+
+export interface AssetMaintenanceTotals {
+  totalWorkOrders: number;
+  openWorkOrders: number;
+  completedWorkOrders: number;
+  lastCompletedAt: string | null;
+  totalMaintenanceCost: number;
+  activeSchedules: number;
+  nextPreventiveDueDate: string | null;
+}
+
+/**
+ * Batched per-asset maintenance totals for the whole (scoped) register — three
+ * grouped queries merged in memory, so exporting N assets never triggers N+1.
+ */
+export async function getAssetMaintenanceTotalsByAsset(scope: AssetScope): Promise<Map<string, AssetMaintenanceTotals>> {
+  const db = await getDb();
+  const propScope = scope.allowedPropertyIds?.length ? inArray(maintenanceAssets.propertyId, scope.allowedPropertyIds) : undefined;
+
+  const [woRows, costRows, pmRows] = await Promise.all([
+    db
+      .select({
+        assetId: workOrders.assetId,
+        total: sql<number>`count(*)::int`,
+        open: sql<number>`count(*) filter (where ${workOrders.status} in ('open','assigned','in_progress','pending'))::int`,
+        completed: sql<number>`count(*) filter (where ${workOrders.status} = 'completed')::int`,
+        lastCompletedAt: sql<string | null>`max(${workOrders.completedAt})`,
+      })
+      .from(workOrders)
+      .innerJoin(maintenanceAssets, eq(maintenanceAssets.id, workOrders.assetId))
+      .where(and(eq(workOrders.organizationId, scope.organizationId), isNull(workOrders.deletedAt), isNull(maintenanceAssets.deletedAt), propScope))
+      .groupBy(workOrders.assetId),
+    db
+      .select({ assetId: maintenanceCosts.assetId, total: sql<number>`coalesce(sum(${maintenanceCosts.amount}), 0)::float8` })
+      .from(maintenanceCosts)
+      .innerJoin(maintenanceAssets, eq(maintenanceAssets.id, maintenanceCosts.assetId))
+      .where(and(eq(maintenanceCosts.organizationId, scope.organizationId), isNull(maintenanceAssets.deletedAt), propScope))
+      .groupBy(maintenanceCosts.assetId),
+    db
+      .select({
+        assetId: preventiveMaintenanceSchedules.assetId,
+        active: sql<number>`count(*) filter (where ${preventiveMaintenanceSchedules.isActive} = true)::int`,
+        nextDue: sql<string | null>`min(${preventiveMaintenanceSchedules.nextDueDate}) filter (where ${preventiveMaintenanceSchedules.isActive} = true)`,
+      })
+      .from(preventiveMaintenanceSchedules)
+      .innerJoin(maintenanceAssets, eq(maintenanceAssets.id, preventiveMaintenanceSchedules.assetId))
+      .where(and(eq(preventiveMaintenanceSchedules.organizationId, scope.organizationId), isNull(maintenanceAssets.deletedAt), propScope))
+      .groupBy(preventiveMaintenanceSchedules.assetId),
+  ]);
+
+  const map = new Map<string, AssetMaintenanceTotals>();
+  const ensure = (id: string | null): AssetMaintenanceTotals | null => {
+    if (!id) return null;
+    let entry = map.get(id);
+    if (!entry) {
+      entry = { totalWorkOrders: 0, openWorkOrders: 0, completedWorkOrders: 0, lastCompletedAt: null, totalMaintenanceCost: 0, activeSchedules: 0, nextPreventiveDueDate: null };
+      map.set(id, entry);
+    }
+    return entry;
+  };
+  for (const r of woRows) {
+    const e = ensure(r.assetId);
+    if (!e) continue;
+    e.totalWorkOrders = Number(r.total);
+    e.openWorkOrders = Number(r.open);
+    e.completedWorkOrders = Number(r.completed);
+    e.lastCompletedAt = r.lastCompletedAt ?? null;
+  }
+  for (const r of costRows) {
+    const e = ensure(r.assetId);
+    if (!e) continue;
+    e.totalMaintenanceCost = Number(r.total);
+  }
+  for (const r of pmRows) {
+    const e = ensure(r.assetId);
+    if (!e) continue;
+    e.activeSchedules = Number(r.active);
+    e.nextPreventiveDueDate = r.nextDue ?? null;
+  }
+  return map;
 }

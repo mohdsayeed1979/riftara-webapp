@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { ShieldCheck } from 'lucide-react';
+import { BarChart3, ShieldCheck } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { FilterBar } from '@/components/app/filter-bar';
 import { KpiCard } from '@/components/ui/kpi-card';
@@ -14,6 +15,7 @@ import { getRequestLocale } from '@/lib/locale';
 import {
   ASSET_STATUSES,
   ASSET_TYPES,
+  getAssetDepreciationTotals,
   getAssetFormReferenceData,
   getAssetKpis,
   listAssets,
@@ -22,6 +24,7 @@ import {
 } from '@/services/asset-service';
 import { AssetFormDialog } from '@/features/assets/asset-form';
 import { AssetRowActions, type AssetActionTarget } from '@/features/assets/asset-actions';
+import { AssetExportMenu } from '@/features/assets/asset-export';
 import { assetStatusTone, humanizeAssetType } from '@/features/assets/status';
 
 export const metadata: Metadata = { title: 'Assets' };
@@ -50,8 +53,9 @@ export default async function AssetsPage({
   const assetType = ASSET_TYPES.includes(params.assetType as AssetType) ? (params.assetType as AssetType) : undefined;
   const propertyId = params.property && params.property !== '' ? params.property : undefined;
 
-  const [kpis, { items, total }, reference] = await Promise.all([
+  const [kpis, depreciation, { items, total }, reference] = await Promise.all([
     getAssetKpis(scope),
+    getAssetDepreciationTotals(scope),
     listAssets({ ...scope, search: params.search, status, propertyId, assetType, page, pageSize: PAGE_SIZE }),
     canCreate || showActions ? getAssetFormReferenceData(user.organizationId) : Promise.resolve({ properties: [], buildings: [], vendors: [] }),
   ]);
@@ -59,6 +63,13 @@ export default async function AssetsPage({
   const money = (value: number) => formatCompactCurrency(value, { locale });
 
   const propertyOptions = reference.properties.map((p) => ({ value: p.id, label: p.name }));
+
+  // Current filters, forwarded to the scope/permission-enforced export routes.
+  const exportQuery = new URLSearchParams();
+  if (params.search) exportQuery.set('search', params.search);
+  if (status) exportQuery.set('status', status);
+  if (assetType) exportQuery.set('assetType', assetType);
+  if (propertyId) exportQuery.set('property', propertyId);
 
   const buildHref = (targetPage: number) => {
     const query = new URLSearchParams();
@@ -100,14 +111,26 @@ export default async function AssetsPage({
       <PageHeader
         title="Asset Register"
         subtitle="Operational equipment across the portfolio."
-        actions={canCreate ? <AssetFormDialog mode="create" reference={reference} /> : undefined}
+        actions={
+          <>
+            <Button variant="secondary" asChild>
+              <Link href="/assets/analytics"><BarChart3 />Analytics</Link>
+            </Button>
+            <AssetExportMenu query={exportQuery.toString()} />
+            {canCreate ? <AssetFormDialog mode="create" reference={reference} /> : null}
+          </>
+        }
       />
 
       <KpiGrid columns={4}>
         <KpiCard label="Total Assets" value={String(kpis.total)} icon={<ShieldCheck />} tone="neutral" />
         <KpiCard label="Operational" value={String(kpis.operational)} tone="success" ringValue={kpis.total > 0 ? (kpis.operational / kpis.total) * 100 : 0} />
-        <KpiCard label="Purchase Value" value={money(kpis.purchaseValue)} tone="gold" />
-        <KpiCard label="Lifetime Maintenance" value={money(kpis.lifetimeMaintenanceCost)} tone="warning" higherIsBetter={false} />
+        <KpiCard label="Under Maintenance" value={String(kpis.underMaintenance)} tone="info" />
+        <KpiCard label="Faulty" value={String(kpis.faulty)} tone="warning" higherIsBetter={false} />
+        <KpiCard label="Decommissioned" value={String(kpis.decommissioned)} tone="neutral" />
+        <KpiCard label="Purchase Cost" value={money(kpis.purchaseValue)} tone="gold" />
+        <KpiCard label="Maintenance Cost" value={money(kpis.lifetimeMaintenanceCost)} tone="warning" higherIsBetter={false} />
+        <KpiCard label="Net Book Value" value={money(depreciation.totalNetBookValue)} caption="Calculated depreciation" tone="success" />
       </KpiGrid>
 
       <FilterBar
