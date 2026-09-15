@@ -9,7 +9,7 @@ import { EmptyState } from '@/components/ui/misc';
 import { KpiGrid, PageHeader } from '@/components/ui/page';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Pagination, Table, TableContainer, TBody, TD, TH, THead, TR } from '@/components/ui/table';
-import { ColumnChart, TrendAreaChart } from '@/components/charts/primitives';
+import { AgingAnalysisChart, CollectionTrendChart } from '@/features/collections/collections-charts';
 import { RecordPaymentButton } from '@/features/collections/record-payment-button';
 import { can, requirePermission } from '@/lib/auth/guard';
 import { formatCompactCurrency, formatCurrency, formatDate, formatPercent } from '@/lib/format';
@@ -158,29 +158,14 @@ export default async function CollectionsPage({
         <Card>
           <CardHeader title={t.agingAnalysis} description={`${money(summary.outstanding)} ${t.outstanding}`} />
           <CardBody className="pt-0">
-            <ColumnChart
-              data={agingChart}
-              series={[{ key: 'Amount', label: 'Outstanding' }]}
-              height={230}
-              yTickFormatter={(value) => formatCompactCurrency(value, { locale }).replace('SAR ', '')}
-              valueFormatter={(value) => formatCompactCurrency(value, { locale })}
-            />
+            <AgingAnalysisChart data={agingChart} locale={locale} />
           </CardBody>
         </Card>
 
         <Card>
           <CardHeader title={t.collectionTrend} description={t.billedVsCollected} />
           <CardBody className="pt-0">
-            <TrendAreaChart
-              data={collectionTrend}
-              series={[
-                { key: 'Billed', label: 'Billed', color: 'var(--color-chart-3)' },
-                { key: 'Collected', label: 'Collected', color: 'var(--color-chart-1)' },
-              ]}
-              height={230}
-              yTickFormatter={(value) => formatCompactCurrency(value, { locale }).replace('SAR ', '')}
-              valueFormatter={(value) => formatCompactCurrency(value, { locale })}
-            />
+            <CollectionTrendChart data={collectionTrend} locale={locale} />
           </CardBody>
         </Card>
 

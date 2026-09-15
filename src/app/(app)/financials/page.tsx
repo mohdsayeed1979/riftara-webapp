@@ -9,7 +9,7 @@ import { KpiCard } from '@/components/ui/kpi-card';
 import { EmptyState } from '@/components/ui/misc';
 import { KpiGrid, PageHeader } from '@/components/ui/page';
 import { Table, TableContainer, TBody, TD, TH, THead, TR } from '@/components/ui/table';
-import { ColumnChart } from '@/components/charts/primitives';
+import { NoiOpexTrendChart } from '@/features/financials/financials-charts';
 import { requirePermission } from '@/lib/auth/guard';
 import { formatCompactCurrency, formatPercent } from '@/lib/format';
 import { getRequestLocale, getRequestLocationId } from '@/lib/locale';
@@ -65,16 +65,7 @@ export default async function FinancialsPage() {
         <Card>
           <CardHeader title="NOI & OPEX Trend" description="Last 12 months" />
           <CardBody className="pt-0">
-            <ColumnChart
-              data={noiTrend}
-              series={[
-                { key: 'NOI', label: 'NOI', color: 'var(--color-chart-1)' },
-                { key: 'OPEX', label: 'OPEX', color: 'var(--color-chart-4)' },
-              ]}
-              height={250}
-              yTickFormatter={(value) => formatCompactCurrency(value, { locale }).replace('SAR ', '')}
-              valueFormatter={(value) => formatCompactCurrency(value, { locale })}
-            />
+            <NoiOpexTrendChart data={noiTrend} locale={locale} />
           </CardBody>
         </Card>
 
