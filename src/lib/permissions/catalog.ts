@@ -31,6 +31,7 @@ export const MODULES = [
   'reports',
   'documents',
   'integrations',
+  'erp_integration',
   'users',
   'settings',
   'audit',
@@ -48,6 +49,8 @@ export const ACTIONS = [
   'export',
   'publish',
   'manage',
+  'retry',
+  'reconcile',
 ] as const;
 
 export type Action = (typeof ACTIONS)[number];
@@ -71,6 +74,8 @@ function define(module: Module, actions: Action[], nouns: string): PermissionDef
     export: `Export ${nouns}`,
     publish: `Publish ${nouns}`,
     manage: `Manage ${nouns} configuration`,
+    retry: `Retry ${nouns}`,
+    reconcile: `Reconcile ${nouns}`,
   };
   return actions.map((action) => ({
     key: `${module}:${action}` as PermissionKey,
@@ -103,6 +108,7 @@ export const PERMISSIONS: PermissionDefinition[] = [
   ...define('reports', ['view', 'create', 'export'], 'management reports'),
   ...define('documents', ['view', 'create', 'delete', 'manage'], 'documents'),
   ...define('integrations', ['view', 'manage'], 'integrations'),
+  ...define('erp_integration', ['view', 'manage', 'retry', 'reconcile'], 'ERP integration events'),
   ...define('users', ['view', 'create', 'edit', 'delete', 'manage'], 'users, roles and permissions'),
   ...define('settings', ['view', 'manage'], 'system settings'),
   ...define('audit', ['view', 'export'], 'audit logs'),
@@ -317,6 +323,7 @@ export const ROLE_DEFINITIONS: RoleDefinition[] = [
       'documents:view',
       'documents:create',
       'audit:view',
+      ...all('erp_integration'),
     ],
   },
   {
@@ -421,6 +428,7 @@ export const ROLE_DEFINITIONS: RoleDefinition[] = [
         'reports',
         'documents',
         'integrations',
+        'erp_integration',
         'settings',
         'website',
       ]),

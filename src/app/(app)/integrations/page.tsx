@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { AlertCircle, CheckCircle2, Circle, Settings2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -117,14 +118,22 @@ function IntegrationCard({
         ) : null}
 
         <div className="mt-auto flex items-center gap-2 pt-3">
-          {canManage ? (
-            <Button variant="secondary" size="sm" disabled={integration.status === 'not_connected' && integration.requiredEnvKeys.length > 0} title={integration.requiredEnvKeys.length > 0 ? 'Add credentials in the environment to enable configuration.' : undefined}>
-              {integration.status === 'connected' ? 'Configure' : 'Connect'}
+          {integration.key === 'dynamics_ax2012' ? (
+            <Button variant="secondary" size="sm" asChild>
+              <Link href="/integrations/erp">Open ERP Integration</Link>
             </Button>
-          ) : null}
-          <Button variant="ghost" size="sm">
-            View Logs
-          </Button>
+          ) : (
+            <>
+              {canManage ? (
+                <Button variant="secondary" size="sm" disabled={integration.status === 'not_connected' && integration.requiredEnvKeys.length > 0} title={integration.requiredEnvKeys.length > 0 ? 'Add credentials in the environment to enable configuration.' : undefined}>
+                  {integration.status === 'connected' ? 'Configure' : 'Connect'}
+                </Button>
+              ) : null}
+              <Button variant="ghost" size="sm">
+                View Logs
+              </Button>
+            </>
+          )}
         </div>
       </CardBody>
     </Card>

@@ -196,6 +196,88 @@ export const webhookDeliveries = pgTable(
   ],
 );
 
+/**
+ * Phase 18 — ERP/accounting integration foundation.
+ *
+ * RIFTARA is not the accounting system of record; these tables let an
+ * operational transaction (an issued invoice, a received payment, a recorded
+ * expense, an asset event...) be queued for export to an external ERP
+ * (initially Dynamics AX 2012 R3) without RIFTARA depending on that system
+ * being reachable. See docs/PHASE_18_ERP_INTEGRATION.md.
+ */
+
+/** Local-entity ↔ external-system-identifier mapping (BRD 109 extension). Polymorphic:
+ *  `entityType` names which RIFTARA table `localEntityId` belongs to. */
+export const erpEntityMappings = pgTable(
+  'erp_entity_mappings',
+  {
+    id: pk(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    /** External system key, e.g. 'dynamics_ax2012'. */
+    system: varchar('system', { length: 48 }).notNull(),
+    /** customer | vendor | property | unit | contract | invoice | payment | expense | asset */
+    entityType: varchar('entity_type', { length: 48 }).notNull(),
+    localEntityId: uuid('local_entity_id').notNull(),
+    /** Generic external identifier — never assumed to be a real AX table/field name. */
+    externalEntityId: varchar('external_entity_id', { length: 160 }),
+    /** pending | mapped | error */
+    status: varchar('status', { length: 24 }).notNull().default('pending'),
+    lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
+    metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default({}),
+    isDemo: isDemo(),
+    ...timestamps,
+  },
+  (t) => [
+    unique('erp_entity_mappings_local_uq').on(t.organizationId, t.system, t.entityType, t.localEntityId),
+    index('erp_entity_mappings_external_idx').on(t.organizationId, t.system, t.entityType, t.externalEntityId),
+  ],
+);
+
+/**
+ * Outbound integration outbox. A business transaction commits locally first;
+ * an event row is written in the same transaction; a worker (manual endpoint,
+ * or cron once a production schedule is approved) later delivers it through
+ * an ErpAdapter. The unique idempotency key makes repeated processing safe.
+ */
+export const erpIntegrationEvents = pgTable(
+  'erp_integration_events',
+  {
+    id: pk(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    system: varchar('system', { length: 48 }).notNull().default('dynamics_ax2012'),
+    /** invoice_issued | payment_received | expense_recorded | asset_acquired | asset_disposed |
+     *  customer_sync | vendor_sync | property_reference_sync | unit_reference_sync */
+    eventType: varchar('event_type', { length: 64 }).notNull(),
+    entityType: varchar('entity_type', { length: 48 }).notNull(),
+    entityId: uuid('entity_id').notNull(),
+    /** organizationId+system+entityType+entityId+eventType+version, composed by the caller. */
+    idempotencyKey: varchar('idempotency_key', { length: 240 }).notNull(),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
+    /** pending | processing | succeeded | failed | retrying | dead_letter */
+    status: varchar('status', { length: 24 }).notNull().default('pending'),
+    attemptCount: integer('attempt_count').notNull().default(0),
+    lastAttemptAt: timestamp('last_attempt_at', { withTimezone: true }),
+    nextRetryAt: timestamp('next_retry_at', { withTimezone: true }),
+    errorCode: varchar('error_code', { length: 48 }),
+    errorMessage: text('error_message'),
+    /** The AX voucher/reference/posting id once accepted — generic, never assumed. */
+    externalReference: varchar('external_reference', { length: 160 }),
+    responseMetadata: jsonb('response_metadata').$type<Record<string, unknown>>(),
+    isDemo: isDemo(),
+    ...timestamps,
+  },
+  (t) => [
+    unique('erp_integration_events_idempotency_uq').on(t.organizationId, t.idempotencyKey),
+    index('erp_integration_events_status_idx').on(t.status),
+    index('erp_integration_events_retry_idx').on(t.nextRetryAt),
+    index('erp_integration_events_entity_idx').on(t.entityType, t.entityId),
+  ],
+);
+
 /** Key/value organization settings (BRD 68). */
 export const settings = pgTable(
   'settings',

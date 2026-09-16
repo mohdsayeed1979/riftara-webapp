@@ -165,6 +165,8 @@ export const integrationCredentials = {
   zoho: Boolean(process.env.ZOHO_CLIENT_ID && process.env.ZOHO_CLIENT_SECRET),
   monday: Boolean(process.env.MONDAY_API_TOKEN),
   erp: Boolean(process.env.ERP_API_BASE_URL && process.env.ERP_API_KEY),
+  /** Phase 18: never true until a real Dynamics AX 2012 R3 transport is approved and configured. */
+  dynamicsAx2012: Boolean(process.env.DYNAMICS_AX2012_BASE_URL && process.env.DYNAMICS_AX2012_API_KEY),
   website: Boolean(env.WEBSITE_WEBHOOK_SECRET),
   smtp: Boolean(process.env.SMTP_HOST && process.env.SMTP_USER),
 } as const;

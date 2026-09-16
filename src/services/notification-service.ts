@@ -294,6 +294,16 @@ export async function notifyHandoverCompleted(organizationId: string, handoverId
   });
 }
 
+/** Notifies once per failed/dead-lettered ERP integration event (not repeatedly for the same one). */
+export async function notifyErpIntegrationFailure(organizationId: string, eventId: string, eventType: string, errorMessage: string): Promise<boolean> {
+  const db = await getDb();
+  return ensureNotification(db, {
+    organizationId, notificationType: 'erp_integration_failed', entityType: 'erp_integration_event', entityId: eventId, recencyDays: 1,
+    requiredPermission: 'erp_integration:view', severity: 'error',
+    title: `ERP integration failed: ${eventType}`, body: errorMessage, linkHref: `/integrations/erp?eventId=${eventId}`,
+  });
+}
+
 /** Expires lapsed reservations (reuses the authoritative BR-011 engine) and
  *  records an audit entry + notification for each reservation that transitioned. */
 export async function runReservationExpiry(actor: Actor): Promise<{ expired: number; notified: number }> {

@@ -48,6 +48,14 @@ const TONE_BY_TOKEN: Record<string, StatusTone> = {
   // Handover checklist (pending/completed/cancelled already covered above)
   ready: 'info',
 
+  // ERP integration outbox (pending already covered above)
+  processing: 'info',
+  succeeded: 'success',
+  retrying: 'warning',
+  dead_letter: 'error',
+  failed: 'error',
+  mapped: 'success',
+
   // Invoice lifecycle
   upcoming: 'neutral',
   due: 'warning',

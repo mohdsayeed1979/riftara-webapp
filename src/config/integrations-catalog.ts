@@ -65,6 +65,18 @@ export const INTEGRATION_CATALOG: IntegrationSpec[] = [
     docsPath: 'docs/API.md#erp',
   },
   {
+    key: 'dynamics_ax2012',
+    name: 'Microsoft Dynamics AX 2012 R3',
+    description:
+      'Phase 18 integration foundation for the accounting system of record. Not connected — the transport ' +
+      '(AIF, middleware, staging tables, file exchange, etc.) is a future deployment decision. See docs/PHASE_18_ERP_INTEGRATION.md.',
+    category: 'accounting',
+    systemOfRecord: 'dynamics_ax2012',
+    requiredEnvKeys: ['DYNAMICS_AX2012_BASE_URL', 'DYNAMICS_AX2012_API_KEY'],
+    credentialKey: 'dynamicsAx2012',
+    docsPath: 'docs/PHASE_18_ERP_INTEGRATION.md',
+  },
+  {
     key: 'google_ads',
     name: 'Google Ads',
     description: 'Imports campaign spend and performance, and uploads offline conversions.',
