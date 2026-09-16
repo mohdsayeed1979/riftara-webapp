@@ -213,9 +213,19 @@ export async function generateLeadFollowUpNotifications(organizationId: string):
   return created;
 }
 
-/** Active/signed contracts within the renewal-notice window that have not yet
- *  started renewal (BRD 88). Uses the configurable renewal-notice days. */
-export async function generateRenewalNotifications(organizationId: string): Promise<number> {
+/**
+ * Active/signed contracts within the renewal-notice window that have not yet
+ * started renewal (BRD 88). Uses the configurable renewal-notice days.
+ *
+ * As of Phase 17 this also creates the operational `renewals` pipeline record
+ * for each eligible contract — not just the notification. `createRenewalFromContract`
+ * is itself idempotent (it returns the existing non-terminal renewal instead of
+ * inserting a duplicate), so repeated cron execution never creates duplicate
+ * renewal records; `ensureNotification`'s recency window separately guarantees
+ * no duplicate notification for the same contract within 30 days.
+ */
+export async function generateRenewalNotifications(actor: Actor): Promise<number> {
+  const organizationId = actor.organizationId;
   const db = await getDb();
   const policy = await getPolicy(organizationId);
   const maxNoticeDays = policy.renewalNoticeDays.length ? Math.max(...policy.renewalNoticeDays) : 90;
@@ -235,6 +245,15 @@ export async function generateRenewalNotifications(organizationId: string): Prom
     .limit(500);
   let created = 0;
   for (const c of rows) {
+    try {
+      const { createRenewalFromContract } = await import('@/services/renewal-service');
+      await createRenewalFromContract(actor, c.id);
+    } catch {
+      // Eligibility can shift between the query above and the transactional
+      // recheck inside createRenewalFromContract (e.g. terminated meanwhile).
+      // Skip this contract rather than aborting the whole batch.
+      continue;
+    }
     const ok = await ensureNotification(db, {
       organizationId, notificationType: 'renewal_required', entityType: 'contract', entityId: c.id, recencyDays: 30,
       requiredPermission: 'contracts:view', severity: 'info',
@@ -243,6 +262,36 @@ export async function generateRenewalNotifications(organizationId: string): Prom
     if (ok) created += 1;
   }
   return created;
+}
+
+/** Notifies renewal owners that a sent offer awaits the tenant's decision. */
+export async function notifyRenewalDecisionNeeded(organizationId: string, renewalId: string, contractNumber: string): Promise<boolean> {
+  const db = await getDb();
+  return ensureNotification(db, {
+    organizationId, notificationType: 'renewal_decision_needed', entityType: 'renewal', entityId: renewalId, recencyDays: 14,
+    requiredPermission: 'renewals:view', severity: 'info',
+    title: `Renewal offer sent: ${contractNumber}`, body: 'Awaiting the tenant’s decision.', linkHref: `/renewals/${renewalId}`,
+  });
+}
+
+/** Notifies that a handover is ready for final completion. */
+export async function notifyHandoverReady(organizationId: string, handoverId: string, contractNumber: string): Promise<boolean> {
+  const db = await getDb();
+  return ensureNotification(db, {
+    organizationId, notificationType: 'handover_ready', entityType: 'handover', entityId: handoverId, recencyDays: 7,
+    requiredPermission: 'handovers:view', severity: 'info',
+    title: `Handover ready: ${contractNumber}`, body: 'All checklist items are complete.', linkHref: `/handovers/${handoverId}`,
+  });
+}
+
+/** Notifies that a handover has been completed. */
+export async function notifyHandoverCompleted(organizationId: string, handoverId: string, contractNumber: string): Promise<boolean> {
+  const db = await getDb();
+  return ensureNotification(db, {
+    organizationId, notificationType: 'handover_completed', entityType: 'handover', entityId: handoverId, recencyDays: 1,
+    requiredPermission: 'handovers:view', severity: 'success',
+    title: `Handover completed: ${contractNumber}`, body: 'The handover has been finalized.', linkHref: `/handovers/${handoverId}`,
+  });
 }
 
 /** Expires lapsed reservations (reuses the authoritative BR-011 engine) and
@@ -416,7 +465,7 @@ export async function generateAllNotifications(actor: Actor): Promise<Automation
     await generateReservationExpiryNotifications(org),
     await generatePreventiveMaintenanceNotifications(org),
     await generateLeadFollowUpNotifications(org),
-    await generateRenewalNotifications(org),
+    await generateRenewalNotifications(actor),
   ];
   const overdue = await generateOverdueNotifications({ id: actor.id, organizationId: org, fullName: actor.fullName });
   const sla = await generateSlaBreachNotifications({ organizationId: org });

@@ -1,0 +1,2 @@
+ALTER TABLE "contracts" ADD CONSTRAINT "contracts_renewed_from_contract_id_contracts_id_fk" FOREIGN KEY ("renewed_from_contract_id") REFERENCES "public"."contracts"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "renewals" ADD CONSTRAINT "renewals_new_contract_id_contracts_id_fk" FOREIGN KEY ("new_contract_id") REFERENCES "public"."contracts"("id") ON DELETE set null ON UPDATE no action;

@@ -1,5 +1,6 @@
 import { relations } from 'drizzle-orm';
 import {
+  type AnyPgColumn,
   boolean,
   date,
   index,
@@ -123,7 +124,7 @@ export const contracts = pgTable(
 
     // Renewal (BRD 83-84)
     renewalStatus: varchar('renewal_status', { length: 32 }).notNull().default('not_started'),
-    renewedFromContractId: uuid('renewed_from_contract_id'),
+    renewedFromContractId: uuid('renewed_from_contract_id').references((): AnyPgColumn => contracts.id, { onDelete: 'set null' }),
     renewalProbability: integer('renewal_probability').notNull().default(50),
     proposedRenewalRent: money('proposed_renewal_rent'),
 
@@ -179,7 +180,7 @@ export const renewals = pgTable(
     proposedRent: money('proposed_rent'),
     marketRent: money('market_rent'),
     agreedRent: money('agreed_rent'),
-    newContractId: uuid('new_contract_id'),
+    newContractId: uuid('new_contract_id').references((): AnyPgColumn => contracts.id, { onDelete: 'set null' }),
     probability: integer('probability').notNull().default(50),
     ownerUserId: uuid('owner_user_id').references(() => users.id, { onDelete: 'set null' }),
     notes: text('notes'),

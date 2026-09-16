@@ -38,6 +38,16 @@ const TONE_BY_TOKEN: Record<string, StatusTone> = {
   terminated: 'error',
   renewal_pending: 'warning',
 
+  // Renewal pipeline
+  in_discussion: 'info',
+  offer_sent: 'warning',
+  renewed: 'success',
+  not_renewed: 'neutral',
+  declined: 'error',
+
+  // Handover checklist (pending/completed/cancelled already covered above)
+  ready: 'info',
+
   // Invoice lifecycle
   upcoming: 'neutral',
   due: 'warning',

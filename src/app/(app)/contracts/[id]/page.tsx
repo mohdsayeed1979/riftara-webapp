@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { Building2, FileSignature, MapPin, Pencil, User } from 'lucide-react';
+import { Building2, FileSignature, LogOut, MapPin, Pencil, RefreshCw, User } from 'lucide-react';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
 import { DetailList, DetailRow, MetaItem, PageHeader } from '@/components/ui/page';
 import { StatusBadge } from '@/components/ui/status-badge';
@@ -12,8 +12,10 @@ import { SignContractButton } from '@/features/contracts/sign-contract-button';
 import { can, requirePermission } from '@/lib/auth/guard';
 import { formatArea, formatCurrency, formatDate } from '@/lib/format';
 import { getRequestLocale } from '@/lib/locale';
+import { getMessages } from '@/i18n';
 import { EntityDocuments } from '@/features/documents/entity-documents';
 import { getContractDetail } from '@/services/contract-service';
+import { isContractRenewalEligible } from '@/services/renewal-service';
 import { isUuid } from '@/lib/utils';
 
 export const dynamic = 'force-dynamic';
@@ -24,6 +26,7 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
   const { id } = await params;
   if (!isUuid(id)) notFound();
   const locale = await getRequestLocale();
+  const m = getMessages(locale);
 
   const data = await getContractDetail(user.organizationId, id);
   if (!data) notFound();
@@ -32,6 +35,10 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
 
   const totalBilled = invoices.reduce((sum, i) => sum + Number(i.totalAmount), 0);
   const totalCollected = invoices.reduce((sum, i) => sum + Number(i.paidAmount), 0);
+
+  const isEditable = contract.status === 'draft' || contract.status === 'issued' || contract.status === 'pending_approval';
+  const isLive = contract.status === 'signed' || contract.status === 'active';
+  const renewalEligibility = isLive ? await isContractRenewalEligible(user.organizationId, id) : { eligible: false };
 
   return (
     <div className="flex flex-col gap-5">
@@ -48,17 +55,41 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
           </>
         }
         actions={
-          can(user, 'contracts:edit') && (contract.status === 'draft' || contract.status === 'issued' || contract.status === 'pending_approval') ? (
-            <>
+          <>
+            {can(user, 'contracts:edit') && isEditable ? (
               <Button variant="secondary" asChild>
                 <Link href={`/contracts/${id}/edit`}>
                   <Pencil />
                   Edit Contract
                 </Link>
               </Button>
-              <SignContractButton contractId={id} />
-            </>
-          ) : undefined
+            ) : null}
+            {isEditable ? <SignContractButton contractId={id} /> : null}
+            {isLive && can(user, 'renewals:create') && renewalEligibility.eligible ? (
+              <Button variant="secondary" asChild>
+                <Link href={`/contracts/${id}/renew`}>
+                  <RefreshCw />
+                  {m.renewals.startRenewal}
+                </Link>
+              </Button>
+            ) : null}
+            {isLive && can(user, 'handovers:create') ? (
+              <Button variant="secondary" asChild>
+                <Link href={`/contracts/${id}/handover?type=handover`}>
+                  <FileSignature />
+                  {m.handovers.startHandover}
+                </Link>
+              </Button>
+            ) : null}
+            {isLive && can(user, 'handovers:create') ? (
+              <Button variant="secondary" asChild>
+                <Link href={`/contracts/${id}/handover?type=move_out`}>
+                  <LogOut />
+                  {m.handovers.startMoveOut}
+                </Link>
+              </Button>
+            ) : null}
+          </>
         }
       />
 
@@ -76,6 +107,9 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
                 <DetailRow label="Start Date" value={formatDate(contract.startDate, { locale })} />
                 <DetailRow label="End Date" value={formatDate(contract.endDate, { locale })} />
                 <DetailRow label="Duration" value={`${contract.durationMonths} months`} />
+                {contract.renewalStatus !== 'not_started' ? (
+                  <DetailRow label={m.contracts.renewalStatusLabel} value={<StatusBadge status={contract.renewalStatus} dot={false} />} />
+                ) : null}
               </DetailList>
               <DetailList>
                 <DetailRow label="Annual Rent" value={<span className="text-[15px] font-semibold">{currency(contract.annualRent)}</span>} />

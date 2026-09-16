@@ -17,6 +17,7 @@
     "db:seed": "tsx src/db/seed/index.ts",
     "db:reset": "tsx src/db/reset.ts",
     "db:setup": "npm run db:migrate && npm run db:seed",
+    "db:sync-permissions": "tsx src/db/sync-permissions.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "verify": "npm run typecheck && npm run lint && npm run test"

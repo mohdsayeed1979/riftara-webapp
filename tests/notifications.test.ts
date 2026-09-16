@@ -120,8 +120,29 @@ describe('PM, follow-up and renewal generators', () => {
     const { contracts } = await import('@/db/schema');
     const [c] = await db.select({ id: contracts.id }).from(contracts).where(and(eq(contracts.organizationId, admin.organizationId), isNull(contracts.deletedAt))).limit(1);
     await db.update(contracts).set({ status: 'active', renewalStatus: 'not_started', endDate: isoIn(60) }).where(eq(contracts.id, c.id));
-    await generateRenewalNotifications(admin.organizationId);
+    await generateRenewalNotifications({ id: admin.id, organizationId: admin.organizationId, fullName: admin.fullName });
     expect(await notifFor('renewal_required', c.id)).toBe(1);
+  });
+
+  it('is idempotent: running the renewal generator twice does not duplicate the renewal pipeline record', async () => {
+    const { generateRenewalNotifications } = await import('@/services/notification-service');
+    const { contracts, renewals } = await import('@/db/schema');
+    const [c] = await db
+      .select({ id: contracts.id })
+      .from(contracts)
+      .where(and(eq(contracts.organizationId, admin.organizationId), isNull(contracts.deletedAt)))
+      .limit(1);
+    await db
+      .update(contracts)
+      .set({ status: 'active', renewalStatus: 'not_started', endDate: isoIn(45) })
+      .where(eq(contracts.id, c.id));
+
+    const actor = { id: admin.id, organizationId: admin.organizationId, fullName: admin.fullName };
+    await generateRenewalNotifications(actor);
+    await generateRenewalNotifications(actor);
+
+    const rows = await db.select({ id: renewals.id }).from(renewals).where(eq(renewals.contractId, c.id));
+    expect(rows.length).toBe(1);
   });
 });
 
