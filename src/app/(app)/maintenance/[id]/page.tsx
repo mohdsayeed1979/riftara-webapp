@@ -9,14 +9,18 @@ import { DetailList, DetailRow, MetaItem, PageHeader } from '@/components/ui/pag
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Table, TableContainer, TBody, TD, TH, THead, TR } from '@/components/ui/table';
 import { RecordCostButton, WorkOrderStatusActions } from '@/features/maintenance/work-order-actions';
+import { ChecklistPanel } from '@/features/maintenance/checklist-panel';
 import { can, requirePermission } from '@/lib/auth/guard';
 import { isUuid } from '@/lib/utils';
 import { formatCurrency, formatDate, formatDateTime, formatDuration } from '@/lib/format';
 import { getRequestLocale } from '@/lib/locale';
+import { getMessages } from '@/i18n';
 import {
+  getWorkOrderChecklistResults,
   getWorkOrderDetail,
   getWorkOrderFormReferenceData,
   getWorkOrderHistory,
+  listChecklistTemplates,
   workOrderSlaState,
 } from '@/services/maintenance-service';
 
@@ -28,17 +32,20 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
   const { id } = await params;
   if (!isUuid(id)) notFound();
   const locale = await getRequestLocale();
+  const t = getMessages(locale).maintenance;
 
   const data = await getWorkOrderDetail(user.organizationId, id);
   if (!data) notFound();
   const { workOrder, costs } = data;
   const canEdit = can(user, 'maintenance:edit');
   const canCreate = can(user, 'maintenance:create');
-  const isTerminal = workOrder.status === 'completed' || workOrder.status === 'cancelled';
+  const isTerminal = workOrder.status === 'completed' || workOrder.status === 'cancelled' || workOrder.status === 'closed';
 
-  const [reference, history] = await Promise.all([
+  const [reference, history, checklistTemplates, checklistResults] = await Promise.all([
     canEdit && !isTerminal ? getWorkOrderFormReferenceData(user.organizationId) : Promise.resolve(null),
     getWorkOrderHistory(user.organizationId, id),
+    listChecklistTemplates(user.organizationId),
+    getWorkOrderChecklistResults(user.organizationId, id),
   ]);
 
   const sla = workOrderSlaState(
@@ -195,6 +202,16 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
             </Table>
           </TableContainer>
         )}
+      </Card>
+
+      <Card>
+        <CardHeader title={t.checklistSectionTitle} description={t.checklistSectionDescription} />
+        <ChecklistPanel
+          workOrderId={id}
+          templates={checklistTemplates.map((t) => ({ id: t.id, nameEn: t.nameEn, items: t.items }))}
+          results={checklistResults.map((r) => ({ templateId: r.templateId, itemKey: r.itemKey, result: r.result, notes: r.notes, correctiveWorkOrderId: r.correctiveWorkOrderId }))}
+          canExecute={canEdit && !isTerminal}
+        />
       </Card>
 
       <Card>

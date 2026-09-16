@@ -85,6 +85,15 @@ export const workOrderStatusEnum = pgEnum('work_order_status', [
   'pending',
   'completed',
   'cancelled',
+  // Phase 19: fuller operational lifecycle. Existing rows keep their legacy
+  // values (open/assigned/in_progress/pending/completed/cancelled); new work
+  // orders may additionally pass through these states.
+  'draft',
+  'submitted',
+  'approved',
+  'on_hold',
+  'verified',
+  'closed',
 ]);
 
 export const priorityEnum = pgEnum('priority_level', ['low', 'medium', 'high', 'critical']);

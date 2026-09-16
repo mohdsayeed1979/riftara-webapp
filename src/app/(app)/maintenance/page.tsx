@@ -104,6 +104,11 @@ export default async function MaintenancePage({
         subtitle={t.subtitle}
         actions={
           <>
+            {can(user, 'maintenance:manage') ? (
+              <Button variant="secondary" asChild>
+                <Link href="/maintenance/checklists">{t.checklists}</Link>
+              </Button>
+            ) : null}
             {can(user, 'maintenance:edit') ? <RunSlaScanButton /> : null}
             {can(user, 'maintenance:create') ? (
               <Button asChild>

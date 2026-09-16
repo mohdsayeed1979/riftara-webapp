@@ -7,7 +7,10 @@ import { actionFailure, actionSuccess, type ActionResult } from '@/lib/errors';
 import { isUuid } from '@/lib/utils';
 import {
   assignWorkOrder,
+  createChecklistTemplate,
   createWorkOrder,
+  executeChecklistItem,
+  generateDuePreventiveWorkOrders,
   generateSlaBreachNotifications,
   generateWorkOrderFromPreventive,
   recordMaintenanceCost,
@@ -18,7 +21,10 @@ import {
 
 const MAINTENANCE_TYPES = ['preventive', 'corrective', 'emergency', 'inspection', 'renovation', 'unit_turnaround'] as const;
 const PRIORITIES = ['low', 'medium', 'high', 'critical'] as const;
-const STATUSES = ['open', 'assigned', 'in_progress', 'pending', 'completed', 'cancelled'] as const;
+const STATUSES = [
+  'open', 'assigned', 'in_progress', 'pending', 'completed', 'cancelled',
+  'draft', 'submitted', 'approved', 'on_hold', 'verified', 'closed',
+] as const;
 
 function opt(v: FormDataEntryValue | null): string | undefined {
   if (typeof v !== 'string') return undefined;
@@ -202,6 +208,90 @@ export async function runSlaBreachNotificationsAction(): Promise<ActionResult<{ 
     const result = await generateSlaBreachNotifications({ organizationId: user.organizationId });
     try { revalidatePath('/maintenance'); } catch { /* cache hint */ }
     return actionSuccess(result);
+  } catch (error) {
+    return actionFailure(error);
+  }
+}
+
+/** In-app trigger for idempotent preventive work-order generation (also
+ *  exposed as POST /api/v1/maintenance/preventive/generate for scheduling). */
+export async function runGenerateDuePreventiveWorkOrdersAction(): Promise<ActionResult<{ scanned: number; generated: number }>> {
+  try {
+    const user = await requirePermission('maintenance:manage');
+    const result = await generateDuePreventiveWorkOrders(user);
+    try { revalidatePath('/maintenance'); revalidatePath('/maintenance/checklists'); } catch { /* cache hint */ }
+    return actionSuccess(result);
+  } catch (error) {
+    return actionFailure(error);
+  }
+}
+
+const checklistItemSchema = z.object({
+  key: z.string().trim().min(1).max(64),
+  labelEn: z.string().trim().min(1).max(200),
+  labelAr: z.string().trim().max(200).optional(),
+  required: z.boolean().optional(),
+  createsCorrectiveOnFail: z.boolean().optional(),
+});
+
+const checklistTemplateSchema = z.object({
+  code: z.string().trim().min(1, 'Enter a code.').max(32),
+  nameEn: z.string().trim().min(1, 'Enter a name.').max(160),
+  nameAr: z.string().trim().max(160).optional(),
+  categoryId: optUuid,
+  items: z.array(checklistItemSchema).min(1, 'Add at least one checklist item.'),
+});
+
+export interface ChecklistTemplateActionResult {
+  id: string;
+}
+
+/** Creates a reusable itemized maintenance checklist template. */
+export async function createChecklistTemplateAction(
+  _prev: ActionResult<ChecklistTemplateActionResult> | null,
+  formData: FormData,
+): Promise<ActionResult<ChecklistTemplateActionResult>> {
+  try {
+    const user = await requirePermission('maintenance:manage');
+    const itemsRaw = opt(formData.get('items'));
+    let items: unknown = [];
+    try {
+      items = itemsRaw ? JSON.parse(itemsRaw) : [];
+    } catch {
+      return { ok: false, error: { code: 'VALIDATION', message: 'Checklist items are malformed.' } };
+    }
+    const parsed = checklistTemplateSchema.safeParse({
+      code: opt(formData.get('code')),
+      nameEn: opt(formData.get('nameEn')),
+      nameAr: opt(formData.get('nameAr')),
+      categoryId: opt(formData.get('categoryId')),
+      items,
+    });
+    if (!parsed.success) {
+      return { ok: false, error: { code: 'VALIDATION', message: 'Please correct the highlighted fields.' }, fieldErrors: fieldErrorsOf(parsed.error) };
+    }
+    const result = await createChecklistTemplate(user, parsed.data);
+    try { revalidatePath('/maintenance/checklists'); } catch { /* cache hint */ }
+    return actionSuccess(result);
+  } catch (error) {
+    return actionFailure(error);
+  }
+}
+
+/** Records one checklist item's result against a work order. */
+export async function executeChecklistItemAction(
+  workOrderId: string,
+  templateId: string,
+  itemKey: string,
+  result: 'pass' | 'fail' | 'na',
+  notes?: string,
+): Promise<ActionResult<{ id: string; correctiveWorkOrderId: string | null }>> {
+  try {
+    if (!isUuid(workOrderId) || !isUuid(templateId)) return { ok: false, error: { code: 'NOT_FOUND', message: 'Work order or checklist template not found.' } };
+    const user = await requirePermission('maintenance:edit');
+    const outcome = await executeChecklistItem(user, { workOrderId, templateId, itemKey, result, notes });
+    try { revalidatePath(`/maintenance/${workOrderId}`); } catch { /* cache hint */ }
+    return actionSuccess(outcome);
   } catch (error) {
     return actionFailure(error);
   }

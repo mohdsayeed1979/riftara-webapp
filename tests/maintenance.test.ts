@@ -237,6 +237,150 @@ describe('SLA calculation & breach notifications', () => {
 });
 
 /* -------------------------------------------------------------------------- */
+describe('Phase 19: extended lifecycle', () => {
+  it('walks the full draft→submitted→approved→assigned→in_progress→on_hold→completed→verified→closed lifecycle', async () => {
+    const { createWorkOrder, transitionWorkOrderStatus } = await import('@/services/maintenance-service');
+    const { workOrders } = await import('@/db/schema');
+    const created = await createWorkOrder(admin, { title: 'Full lifecycle', maintenanceType: 'corrective', propertyId, priority: 'medium' });
+    // createWorkOrder always starts at "open" for backward compatibility; force it to "draft" to exercise the new lifecycle.
+    await db.update(workOrders).set({ status: 'draft' }).where(eq(workOrders.id, created.id));
+
+    const path: Array<import('@/services/maintenance-service').WorkOrderStatus> = [
+      'submitted', 'approved', 'assigned', 'in_progress', 'on_hold', 'in_progress', 'completed', 'verified', 'closed',
+    ];
+    for (const status of path) {
+      const result = await transitionWorkOrderStatus(admin, created.id, status);
+      expect(result.status).toBe(status);
+    }
+  });
+
+  it('still rejects an invalid jump in the extended lifecycle', async () => {
+    const { transitionWorkOrderStatus } = await import('@/services/maintenance-service');
+    const { workOrders } = await import('@/db/schema');
+    const wo = await makeWorkOrder({ title: 'Invalid extended jump' });
+    await db.update(workOrders).set({ status: 'draft' }).where(eq(workOrders.id, wo.id));
+    await expect(transitionWorkOrderStatus(admin, wo.id, 'closed')).rejects.toMatchObject({ code: 'CONFLICT' });
+  });
+
+  it('computes an SLA "warning" state as the deadline approaches', async () => {
+    const { workOrderSlaState } = await import('@/services/maintenance-service');
+    const soon = workOrderSlaState({ createdAt: new Date(Date.now() - 1000 * 3600 * 20), resolutionSlaHours: 24, status: 'in_progress', resolutionSlaMet: null });
+    expect(soon.state).toBe('warning');
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+describe('Phase 19: idempotent preventive generation & bulk automation', () => {
+  it('never creates a second work order for the same schedule + occurrence date, even across the bulk generator', async () => {
+    const { generateWorkOrderFromPreventive, generateDuePreventiveWorkOrders } = await import('@/services/maintenance-service');
+    const { preventiveMaintenanceSchedules, preventiveMaintenanceOccurrences, workOrders } = await import('@/db/schema');
+    const [schedule] = await db
+      .select({ id: preventiveMaintenanceSchedules.id, nextDueDate: preventiveMaintenanceSchedules.nextDueDate })
+      .from(preventiveMaintenanceSchedules)
+      .where(eq(preventiveMaintenanceSchedules.organizationId, admin.organizationId))
+      .limit(1);
+    // Force it due today so the bulk generator picks it up.
+    await db.update(preventiveMaintenanceSchedules).set({ nextDueDate: new Date().toISOString().slice(0, 10), isActive: true }).where(eq(preventiveMaintenanceSchedules.id, schedule.id));
+    const [due] = await db.select({ nextDueDate: preventiveMaintenanceSchedules.nextDueDate }).from(preventiveMaintenanceSchedules).where(eq(preventiveMaintenanceSchedules.id, schedule.id));
+
+    const direct1 = await generateWorkOrderFromPreventive(admin, schedule.id, due.nextDueDate);
+    const direct2 = await generateWorkOrderFromPreventive(admin, schedule.id, due.nextDueDate);
+    expect(direct2.id).toBe(direct1.id);
+    expect(direct2.alreadyExisted).toBe(true);
+
+    // Running the bulk generator afterwards must not create a second occurrence
+    // (or work order) for this same schedule + occurrence date, even though it
+    // may generate work orders for other due schedules in the same run.
+    await generateDuePreventiveWorkOrders(admin);
+
+    const occurrences = await db
+      .select({ id: preventiveMaintenanceOccurrences.id, workOrderId: preventiveMaintenanceOccurrences.workOrderId })
+      .from(preventiveMaintenanceOccurrences)
+      .where(and(eq(preventiveMaintenanceOccurrences.scheduleId, schedule.id), eq(preventiveMaintenanceOccurrences.occurrenceDate, due.nextDueDate)));
+    expect(occurrences.length).toBe(1);
+    expect(occurrences[0].workOrderId).toBe(direct1.id);
+
+    const matchingWorkOrders = await db.select({ id: workOrders.id }).from(workOrders).where(eq(workOrders.id, direct1.id));
+    expect(matchingWorkOrders.length).toBe(1);
+  });
+
+  it('advances a schedule and generates exactly one new work order per call of the bulk generator', async () => {
+    const { generateDuePreventiveWorkOrders } = await import('@/services/maintenance-service');
+    const { preventiveMaintenanceSchedules, properties, maintenanceCategories } = await import('@/db/schema');
+    const [prop] = await db.select({ id: properties.id }).from(properties).where(eq(properties.organizationId, admin.organizationId)).limit(1);
+    const [cat] = await db.select({ id: maintenanceCategories.id }).from(maintenanceCategories).where(eq(maintenanceCategories.organizationId, admin.organizationId)).limit(1);
+    const [fresh] = await db
+      .insert(preventiveMaintenanceSchedules)
+      .values({
+        organizationId: admin.organizationId,
+        nameEn: 'Fresh PM schedule',
+        propertyId: prop.id,
+        categoryId: cat.id,
+        frequency: 'monthly',
+        intervalMonths: 1,
+        nextDueDate: new Date().toISOString().slice(0, 10),
+        isActive: true,
+      })
+      .returning({ id: preventiveMaintenanceSchedules.id, nextDueDate: preventiveMaintenanceSchedules.nextDueDate });
+
+    const first = await generateDuePreventiveWorkOrders(admin);
+    expect(first.generated).toBeGreaterThanOrEqual(1);
+
+    const [after] = await db.select({ nextDueDate: preventiveMaintenanceSchedules.nextDueDate }).from(preventiveMaintenanceSchedules).where(eq(preventiveMaintenanceSchedules.id, fresh.id));
+    expect(after.nextDueDate).not.toBe(fresh.nextDueDate);
+
+    // Calling it again immediately (nothing newly due) must not generate again for this schedule.
+    const second = await generateDuePreventiveWorkOrders(admin);
+    expect(second.generated).toBe(0);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+describe('Phase 19: itemized maintenance checklists', () => {
+  it('executes checklist items, is idempotent on re-submission, and creates exactly one corrective work order on failure', async () => {
+    const { createChecklistTemplate, executeChecklistItem, getWorkOrderChecklistResults } = await import('@/services/maintenance-service');
+    const { workOrderChecklistResults } = await import('@/db/schema');
+    const wo = await makeWorkOrder({ title: 'Checklist WO', categoryId });
+    const template = await createChecklistTemplate(admin, {
+      code: `CHK-${Date.now()}`,
+      nameEn: 'Elevator quarterly inspection',
+      categoryId,
+      items: [
+        { key: 'brakes', labelEn: 'Brakes engage correctly', required: true, createsCorrectiveOnFail: true },
+        { key: 'lighting', labelEn: 'Cabin lighting works', required: false },
+      ],
+    });
+
+    const pass = await executeChecklistItem(admin, { workOrderId: wo.id, templateId: template.id, itemKey: 'lighting', result: 'pass' });
+    expect(pass.correctiveWorkOrderId).toBeNull();
+
+    const fail1 = await executeChecklistItem(admin, { workOrderId: wo.id, templateId: template.id, itemKey: 'brakes', result: 'fail', notes: 'Slipping' });
+    expect(fail1.correctiveWorkOrderId).toBeTruthy();
+
+    // Re-submitting the same failed item must not spawn a second corrective work order, nor duplicate the result row.
+    const fail2 = await executeChecklistItem(admin, { workOrderId: wo.id, templateId: template.id, itemKey: 'brakes', result: 'fail', notes: 'Still slipping' });
+    expect(fail2.correctiveWorkOrderId).toBe(fail1.correctiveWorkOrderId);
+
+    const rows = await db.select({ id: workOrderChecklistResults.id }).from(workOrderChecklistResults).where(and(eq(workOrderChecklistResults.workOrderId, wo.id), eq(workOrderChecklistResults.itemKey, 'brakes')));
+    expect(rows.length).toBe(1);
+
+    const results = await getWorkOrderChecklistResults(admin.organizationId, wo.id);
+    expect(results.length).toBe(2);
+  });
+
+  it('rejects a duplicate template code and an unknown checklist item key', async () => {
+    const { createChecklistTemplate, executeChecklistItem } = await import('@/services/maintenance-service');
+    const code = `CHK-DUP-${Date.now()}`;
+    await createChecklistTemplate(admin, { code, nameEn: 'Dup test', items: [{ key: 'a', labelEn: 'A' }] });
+    await expect(createChecklistTemplate(admin, { code, nameEn: 'Dup test 2', items: [{ key: 'a', labelEn: 'A' }] })).rejects.toMatchObject({ code: 'CONFLICT' });
+
+    const template = await createChecklistTemplate(admin, { code: `CHK-${Date.now()}-x`, nameEn: 'Item test', items: [{ key: 'only', labelEn: 'Only item' }] });
+    const wo = await makeWorkOrder({ title: 'Bad item key' });
+    await expect(executeChecklistItem(admin, { workOrderId: wo.id, templateId: template.id, itemKey: 'missing', result: 'pass' })).rejects.toMatchObject({ code: 'VALIDATION' });
+  });
+});
+
+/* -------------------------------------------------------------------------- */
 describe('Organization isolation & detail', () => {
   it('does not expose a work order to another organization', async () => {
     const { getWorkOrderDetail, transitionWorkOrderStatus } = await import('@/services/maintenance-service');

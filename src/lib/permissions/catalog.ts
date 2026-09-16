@@ -102,7 +102,7 @@ export const PERMISSIONS: PermissionDefinition[] = [
   ...define('tenants', ['view', 'create', 'edit', 'export'], 'tenants'),
   ...define('collections', ['view', 'create', 'edit', 'approve', 'export'], 'collections and receivables'),
   ...define('financials', ['view', 'create', 'edit', 'approve', 'export'], 'financial records'),
-  ...define('maintenance', ['view', 'create', 'edit', 'delete', 'approve', 'export'], 'maintenance work orders'),
+  ...define('maintenance', ['view', 'create', 'edit', 'delete', 'approve', 'export', 'manage'], 'maintenance work orders'),
   ...define('assets', ['view', 'create', 'edit', 'delete'], 'the asset register'),
   ...define('marketing', ['view', 'create', 'edit', 'export'], 'marketing campaigns'),
   ...define('reports', ['view', 'create', 'export'], 'management reports'),

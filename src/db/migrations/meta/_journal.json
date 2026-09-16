@@ -43,6 +43,13 @@
       "when": 1789550628615,
       "tag": "0005_smiling_gorilla_man",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789557811459,
+      "tag": "0006_military_quentin_quire",
+      "breakpoints": true
     }
   ]
 }

@@ -4,14 +4,17 @@ import { getDb } from '@/db/client';
 import {
   auditLogs,
   maintenanceCategories,
+  maintenanceChecklistTemplates,
   maintenanceCosts,
   notifications,
+  preventiveMaintenanceOccurrences,
   preventiveMaintenanceSchedules,
   properties,
   tenants,
   units,
   users,
   vendors,
+  workOrderChecklistResults,
   workOrders,
 } from '@/db/schema';
 import type { DbExecutor } from '@/db/types';
@@ -20,30 +23,73 @@ import { conflict, forbidden, notFound, validationError } from '@/lib/errors';
 import { getPolicy } from '@/lib/settings';
 import { round2 } from '@/lib/utils';
 import type { SessionUser } from '@/lib/auth/session';
+import type { PermissionKey } from '@/lib/permissions/catalog';
 
-/** Allowed work-order status transitions (BRD 52). Terminal states are empty. */
+/**
+ * Minimal actor shape accepted by the preventive-generation and work-order
+ * creation helpers — satisfied by both an interactive `SessionUser` and an
+ * API/cron `ApiPrincipal` (whose `userId` may be null for a bare API key).
+ */
+export interface MaintenanceActor {
+  id: string | null;
+  organizationId: string;
+  fullName: string;
+  permissions: PermissionKey[];
+}
+
+/**
+ * Allowed work-order status transitions (BRD 52). Terminal states are empty.
+ *
+ * Phase 19 extends this with a fuller lifecycle (draft/submitted/approved/
+ * on_hold/verified/closed) while keeping every legacy value and edge exactly
+ * as before, so the 635 pre-existing seeded work orders and any code built
+ * against the original 6-state machine keep working unchanged. New work
+ * orders may opt into the fuller lifecycle by starting at "draft".
+ */
 const STATUS_TRANSITIONS: Record<string, string[]> = {
+  // Legacy lifecycle (unchanged).
   open: ['assigned', 'in_progress', 'cancelled'],
-  assigned: ['in_progress', 'pending', 'cancelled'],
-  in_progress: ['pending', 'completed', 'cancelled'],
+  assigned: ['in_progress', 'pending', 'on_hold', 'cancelled'],
+  in_progress: ['pending', 'on_hold', 'completed', 'cancelled'],
   pending: ['in_progress', 'completed', 'cancelled'],
-  completed: [],
+  completed: ['verified'],
   cancelled: [],
+  // Phase 19 extended lifecycle.
+  draft: ['submitted', 'cancelled'],
+  submitted: ['approved', 'cancelled'],
+  approved: ['assigned', 'cancelled'],
+  on_hold: ['in_progress', 'completed', 'cancelled'],
+  verified: ['closed'],
+  closed: [],
 };
 
-export type WorkOrderStatus = 'open' | 'assigned' | 'in_progress' | 'pending' | 'completed' | 'cancelled';
+export type WorkOrderStatus =
+  | 'open'
+  | 'assigned'
+  | 'in_progress'
+  | 'pending'
+  | 'completed'
+  | 'cancelled'
+  | 'draft'
+  | 'submitted'
+  | 'approved'
+  | 'on_hold'
+  | 'verified'
+  | 'closed';
 
 function hoursBetween(from: Date, to: Date): number {
   return Math.max(0, Math.round((to.getTime() - from.getTime()) / 3_600_000));
 }
 
 /** Pure SLA state derived from stored values (no second SLA engine). */
+const SLA_WARNING_THRESHOLD_RATIO = 0.2;
+
 export function workOrderSlaState(
   wo: { createdAt: Date; resolutionSlaHours: number; status: string; resolutionSlaMet: boolean | null },
   now: Date = new Date(),
-): { dueAt: Date; remainingHours: number; breached: boolean; state: 'met' | 'breached' | 'on_track' | 'closed' } {
+): { dueAt: Date; remainingHours: number; breached: boolean; state: 'met' | 'breached' | 'on_track' | 'warning' | 'closed' } {
   const dueAt = new Date(wo.createdAt.getTime() + wo.resolutionSlaHours * 3_600_000);
-  if (wo.status === 'completed') {
+  if (wo.status === 'completed' || wo.status === 'verified' || wo.status === 'closed') {
     return { dueAt, remainingHours: 0, breached: wo.resolutionSlaMet === false, state: wo.resolutionSlaMet === false ? 'breached' : 'met' };
   }
   if (wo.status === 'cancelled') {
@@ -51,7 +97,8 @@ export function workOrderSlaState(
   }
   const remainingHours = Math.round((dueAt.getTime() - now.getTime()) / 3_600_000);
   const breached = now.getTime() > dueAt.getTime();
-  return { dueAt, remainingHours, breached, state: breached ? 'breached' : 'on_track' };
+  const warning = !breached && remainingHours <= wo.resolutionSlaHours * SLA_WARNING_THRESHOLD_RATIO;
+  return { dueAt, remainingHours, breached, state: breached ? 'breached' : warning ? 'warning' : 'on_track' };
 }
 
 /** Validates optional work-order references against org-scoped data. */
@@ -322,6 +369,79 @@ export interface CreateWorkOrderInput {
   estimatedCost?: number;
 }
 
+/** Core work-order insert, usable both standalone and nested inside a caller's
+ *  already-open transaction (e.g. idempotent preventive generation) — never
+ *  opens its own `getDb()`/transaction, per the PGlite single-connection rule. */
+async function createWorkOrderInTx(
+  tx: DbExecutor,
+  actor: MaintenanceActor,
+  input: CreateWorkOrderInput,
+  sla: { responseHours: number; resolutionHours: number },
+): Promise<{ id: string; code: string }> {
+  await validateWorkOrderRefs(tx, actor.organizationId, {
+    propertyId: input.propertyId,
+    unitId: input.unitId ?? null,
+    categoryId: input.categoryId ?? null,
+    vendorId: input.vendorId ?? null,
+    assignedUserId: input.assignedUserId ?? null,
+    tenantId: input.tenantId ?? null,
+  });
+
+  // Derive the next code from the highest existing code (zero-padded, so
+  // lexical max equals numeric max) rather than the row count — this avoids
+  // colliding with non-contiguous seeded codes.
+  const [{ maxCode }] = await tx
+    .select({ maxCode: sql<string | null>`max(${workOrders.code})` })
+    .from(workOrders)
+    .where(eq(workOrders.organizationId, actor.organizationId));
+  const nextNumber = maxCode ? Number(maxCode.replace(/\D/g, '')) + 1 : 1;
+  const code = `WO-${String(nextNumber).padStart(5, '0')}`;
+
+  // An initial vendor/user assignment moves the order to "assigned" and starts
+  // the response-SLA clock immediately.
+  const now = new Date();
+  const assigned = Boolean(input.vendorId || input.assignedUserId);
+
+  const [created] = await tx
+    .insert(workOrders)
+    .values({
+      organizationId: actor.organizationId,
+      code,
+      title: input.title,
+      description: input.description ?? null,
+      maintenanceType: input.maintenanceType,
+      categoryId: input.categoryId ?? null,
+      propertyId: input.propertyId,
+      buildingId: input.buildingId ?? null,
+      unitId: input.unitId ?? null,
+      assetId: input.assetId ?? null,
+      tenantId: input.tenantId ?? null,
+      priority: input.priority,
+      status: assigned ? 'assigned' : 'open',
+      vendorId: input.vendorId ?? null,
+      assignedUserId: input.assignedUserId ?? null,
+      respondedAt: assigned ? now : null,
+      actualResponseHours: assigned ? 0 : null,
+      responseSlaMet: assigned ? true : null,
+      responseSlaHours: sla.responseHours,
+      resolutionSlaHours: sla.resolutionHours,
+      estimatedCost: round2(input.estimatedCost ?? 0),
+    })
+    .returning({ id: workOrders.id });
+
+  await recordAudit(tx, {
+    organizationId: actor.organizationId,
+    action: 'create',
+    entityType: 'work_order',
+    entityId: created.id,
+    entityLabel: code,
+    newValue: { title: input.title, priority: input.priority, status: assigned ? 'assigned' : 'open' },
+    actor: actor.id ? { id: actor.id, fullName: actor.fullName } : null,
+  });
+
+  return { id: created.id, code };
+}
+
 export async function createWorkOrder(
   actor: SessionUser,
   input: CreateWorkOrderInput,
@@ -330,71 +450,7 @@ export async function createWorkOrder(
   // Policy is read outside the transaction (PGlite single-connection safety).
   const policy = await getPolicy(actor.organizationId);
   const sla = policy.maintenanceSlaByPriority[input.priority] ?? { responseHours: 24, resolutionHours: 72 };
-
-  return db.transaction(async (tx) => {
-    await validateWorkOrderRefs(tx, actor.organizationId, {
-      propertyId: input.propertyId,
-      unitId: input.unitId ?? null,
-      categoryId: input.categoryId ?? null,
-      vendorId: input.vendorId ?? null,
-      assignedUserId: input.assignedUserId ?? null,
-      tenantId: input.tenantId ?? null,
-    });
-
-    // Derive the next code from the highest existing code (zero-padded, so
-    // lexical max equals numeric max) rather than the row count — this avoids
-    // colliding with non-contiguous seeded codes.
-    const [{ maxCode }] = await tx
-      .select({ maxCode: sql<string | null>`max(${workOrders.code})` })
-      .from(workOrders)
-      .where(eq(workOrders.organizationId, actor.organizationId));
-    const nextNumber = maxCode ? Number(maxCode.replace(/\D/g, '')) + 1 : 1;
-    const code = `WO-${String(nextNumber).padStart(5, '0')}`;
-
-    // An initial vendor/user assignment moves the order to "assigned" and starts
-    // the response-SLA clock immediately.
-    const now = new Date();
-    const assigned = Boolean(input.vendorId || input.assignedUserId);
-
-    const [created] = await tx
-      .insert(workOrders)
-      .values({
-        organizationId: actor.organizationId,
-        code,
-        title: input.title,
-        description: input.description ?? null,
-        maintenanceType: input.maintenanceType,
-        categoryId: input.categoryId ?? null,
-        propertyId: input.propertyId,
-        buildingId: input.buildingId ?? null,
-        unitId: input.unitId ?? null,
-        assetId: input.assetId ?? null,
-        tenantId: input.tenantId ?? null,
-        priority: input.priority,
-        status: assigned ? 'assigned' : 'open',
-        vendorId: input.vendorId ?? null,
-        assignedUserId: input.assignedUserId ?? null,
-        respondedAt: assigned ? now : null,
-        actualResponseHours: assigned ? 0 : null,
-        responseSlaMet: assigned ? true : null,
-        responseSlaHours: sla.responseHours,
-        resolutionSlaHours: sla.resolutionHours,
-        estimatedCost: round2(input.estimatedCost ?? 0),
-      })
-      .returning({ id: workOrders.id });
-
-    await recordAudit(tx, {
-      organizationId: actor.organizationId,
-      action: 'create',
-      entityType: 'work_order',
-      entityId: created.id,
-      entityLabel: code,
-      newValue: { title: input.title, priority: input.priority, status: assigned ? 'assigned' : 'open' },
-      actor: { id: actor.id, fullName: actor.fullName },
-    });
-
-    return { id: created.id, code };
-  });
+  return db.transaction((tx) => createWorkOrderInTx(tx, actor, input, sla));
 }
 
 /**
@@ -411,6 +467,9 @@ export async function recordMaintenanceCost(
     incurredOn: string;
     costType?: string;
     invoiceNumber?: string;
+    /** Itemized materials/spare-parts capture (Phase 19), typically paired with costType='parts'. */
+    quantity?: number;
+    unit?: string;
   },
 ): Promise<{ id: string }> {
   if (input.amount <= 0) throw validationError('Cost amount must be greater than zero.');
@@ -446,6 +505,8 @@ export async function recordMaintenanceCost(
         vatAmount: round2(input.amount * 0.15),
         invoiceNumber: input.invoiceNumber ?? null,
         incurredOn: input.incurredOn,
+        quantity: input.quantity !== undefined ? String(input.quantity) : null,
+        unit: input.unit ?? null,
         recordedByUserId: actor.id,
       })
       .returning({ id: maintenanceCosts.id });
@@ -659,62 +720,125 @@ export async function transitionWorkOrderStatus(
 /* Preventive maintenance → work order generation                              */
 /* -------------------------------------------------------------------------- */
 
-/** Generates a work order from a preventive-maintenance schedule. Idempotent by
- *  heuristic: if a non-terminal preventive work order already exists for the
- *  same property and title, that one is returned instead of a duplicate.
- *  (An exact per-occurrence link would need a schema column — deferred.) */
+/**
+ * Generates a work order from a preventive-maintenance schedule for one
+ * scheduled occurrence date. Idempotent by a real per-occurrence identity: a
+ * `(scheduleId, occurrenceDate)` unique constraint on
+ * `preventive_maintenance_occurrences` guarantees that no matter how many
+ * times — or how concurrently — this is invoked for the same schedule and
+ * occurrence, exactly one work order is ever generated. Running the generator
+ * twice for the same occurrence returns the same work order the second time.
+ */
 export async function generateWorkOrderFromPreventive(
-  actor: SessionUser,
+  actor: MaintenanceActor,
   scheduleId: string,
+  occurrenceDate?: string,
 ): Promise<{ id: string; code: string; alreadyExisted: boolean }> {
   const db = await getDb();
-  const [schedule] = await db
-    .select({
-      id: preventiveMaintenanceSchedules.id,
-      name: preventiveMaintenanceSchedules.nameEn,
-      propertyId: preventiveMaintenanceSchedules.propertyId,
-      buildingId: preventiveMaintenanceSchedules.buildingId,
-      unitId: preventiveMaintenanceSchedules.unitId,
-      assetId: preventiveMaintenanceSchedules.assetId,
-      categoryId: preventiveMaintenanceSchedules.categoryId,
-      vendorId: preventiveMaintenanceSchedules.vendorId,
-      estimatedCost: preventiveMaintenanceSchedules.estimatedCost,
-    })
-    .from(preventiveMaintenanceSchedules)
-    .where(and(eq(preventiveMaintenanceSchedules.id, scheduleId), eq(preventiveMaintenanceSchedules.organizationId, actor.organizationId)))
-    .limit(1);
-  if (!schedule) throw notFound('Preventive maintenance schedule', scheduleId);
+  // Policy is read outside the transaction (PGlite single-connection safety).
+  const policy = await getPolicy(actor.organizationId);
 
-  const [existing] = await db
-    .select({ id: workOrders.id, code: workOrders.code })
-    .from(workOrders)
-    .where(
-      and(
-        eq(workOrders.organizationId, actor.organizationId),
-        eq(workOrders.propertyId, schedule.propertyId),
-        eq(workOrders.maintenanceType, 'preventive'),
-        eq(workOrders.title, schedule.name),
-        inArray(workOrders.status, ['open', 'assigned', 'in_progress', 'pending']),
-        isNull(workOrders.deletedAt),
-      ),
-    )
-    .limit(1);
-  if (existing) return { id: existing.id, code: existing.code, alreadyExisted: true };
+  return db.transaction(async (tx) => {
+    const [schedule] = await tx
+      .select({
+        id: preventiveMaintenanceSchedules.id,
+        name: preventiveMaintenanceSchedules.nameEn,
+        propertyId: preventiveMaintenanceSchedules.propertyId,
+        buildingId: preventiveMaintenanceSchedules.buildingId,
+        unitId: preventiveMaintenanceSchedules.unitId,
+        assetId: preventiveMaintenanceSchedules.assetId,
+        categoryId: preventiveMaintenanceSchedules.categoryId,
+        vendorId: preventiveMaintenanceSchedules.vendorId,
+        estimatedCost: preventiveMaintenanceSchedules.estimatedCost,
+        nextDueDate: preventiveMaintenanceSchedules.nextDueDate,
+      })
+      .from(preventiveMaintenanceSchedules)
+      .where(and(eq(preventiveMaintenanceSchedules.id, scheduleId), eq(preventiveMaintenanceSchedules.organizationId, actor.organizationId)))
+      .limit(1);
+    if (!schedule) throw notFound('Preventive maintenance schedule', scheduleId);
 
-  const created = await createWorkOrder(actor, {
-    title: schedule.name,
-    description: `Preventive maintenance: ${schedule.name}`,
-    maintenanceType: 'preventive',
-    categoryId: schedule.categoryId ?? undefined,
-    propertyId: schedule.propertyId,
-    buildingId: schedule.buildingId ?? undefined,
-    unitId: schedule.unitId ?? undefined,
-    assetId: schedule.assetId ?? undefined,
-    priority: 'medium',
-    vendorId: schedule.vendorId ?? undefined,
-    estimatedCost: Number(schedule.estimatedCost),
+    const occDate = occurrenceDate ?? schedule.nextDueDate;
+
+    // Claim the occurrence: the unique index is the actual idempotency
+    // guarantee, not this application-level check.
+    const claimed = await tx
+      .insert(preventiveMaintenanceOccurrences)
+      .values({ organizationId: actor.organizationId, scheduleId, occurrenceDate: occDate })
+      .onConflictDoNothing({ target: [preventiveMaintenanceOccurrences.scheduleId, preventiveMaintenanceOccurrences.occurrenceDate] })
+      .returning({ id: preventiveMaintenanceOccurrences.id });
+
+    if (claimed.length === 0) {
+      // Someone already generated this occurrence — return the existing link.
+      const [occ] = await tx
+        .select({ workOrderId: preventiveMaintenanceOccurrences.workOrderId })
+        .from(preventiveMaintenanceOccurrences)
+        .where(and(eq(preventiveMaintenanceOccurrences.scheduleId, scheduleId), eq(preventiveMaintenanceOccurrences.occurrenceDate, occDate)))
+        .limit(1);
+      if (occ?.workOrderId) {
+        const [wo] = await tx.select({ id: workOrders.id, code: workOrders.code }).from(workOrders).where(eq(workOrders.id, occ.workOrderId)).limit(1);
+        if (wo) return { ...wo, alreadyExisted: true };
+      }
+      throw conflict('This preventive maintenance occurrence is already being generated.');
+    }
+
+    const sla = policy.maintenanceSlaByPriority.medium ?? { responseHours: 24, resolutionHours: 72 };
+    const created = await createWorkOrderInTx(
+      tx,
+      actor,
+      {
+        title: schedule.name,
+        description: `Preventive maintenance: ${schedule.name}`,
+        maintenanceType: 'preventive',
+        categoryId: schedule.categoryId ?? undefined,
+        propertyId: schedule.propertyId,
+        buildingId: schedule.buildingId ?? undefined,
+        unitId: schedule.unitId ?? undefined,
+        assetId: schedule.assetId ?? undefined,
+        priority: 'medium',
+        vendorId: schedule.vendorId ?? undefined,
+        estimatedCost: Number(schedule.estimatedCost),
+      },
+      sla,
+    );
+
+    await tx.update(preventiveMaintenanceOccurrences).set({ workOrderId: created.id, updatedAt: new Date() }).where(eq(preventiveMaintenanceOccurrences.id, claimed[0].id));
+
+    return { ...created, alreadyExisted: false };
   });
-  return { ...created, alreadyExisted: false };
+}
+
+/**
+ * Scans active preventive-maintenance schedules that are due and generates
+ * (idempotently) one work order per due occurrence, advancing each
+ * schedule's `nextDueDate` by its configured interval. Safe to call
+ * repeatedly — e.g. from an automation/cron endpoint — since a schedule's
+ * `nextDueDate` only advances after a genuinely new occurrence was created.
+ */
+export async function generateDuePreventiveWorkOrders(
+  actor: MaintenanceActor,
+): Promise<{ scanned: number; generated: number }> {
+  const db = await getDb();
+  const organizationId = actor.organizationId;
+  const dueSchedules = await db
+    .select({ id: preventiveMaintenanceSchedules.id, nextDueDate: preventiveMaintenanceSchedules.nextDueDate, intervalMonths: preventiveMaintenanceSchedules.intervalMonths })
+    .from(preventiveMaintenanceSchedules)
+    .where(and(eq(preventiveMaintenanceSchedules.organizationId, organizationId), eq(preventiveMaintenanceSchedules.isActive, true), sql`${preventiveMaintenanceSchedules.nextDueDate} <= current_date`))
+    .limit(500);
+
+  let generated = 0;
+  for (const s of dueSchedules) {
+    const result = await generateWorkOrderFromPreventive(actor, s.id, s.nextDueDate);
+    if (!result.alreadyExisted) {
+      generated += 1;
+      const next = new Date(s.nextDueDate);
+      next.setMonth(next.getMonth() + Math.max(1, s.intervalMonths));
+      await db
+        .update(preventiveMaintenanceSchedules)
+        .set({ nextDueDate: next.toISOString().slice(0, 10), lastCompletedDate: s.nextDueDate, status: 'scheduled', updatedAt: new Date() })
+        .where(eq(preventiveMaintenanceSchedules.id, s.id));
+    }
+  }
+  return { scanned: dueSchedules.length, generated };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -781,6 +905,218 @@ export async function generateSlaBreachNotifications(
     notificationsCreated += 1;
   }
   return { scanned: rows.length, notificationsCreated };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Itemized maintenance checklists (Phase 19)                                  */
+/*                                                                              */
+/* Distinct from the Phase 17 contract-handover inspection (unitCondition +    */
+/* documents): this is a reusable, templated pass/fail/NA checklist executed   */
+/* against a work order, with an optional auto-created corrective work order   */
+/* when a required item fails.                                                */
+/* -------------------------------------------------------------------------- */
+
+export interface ChecklistItemInput {
+  key: string;
+  labelEn: string;
+  labelAr?: string;
+  required?: boolean;
+  createsCorrectiveOnFail?: boolean;
+}
+
+/** Creates a reusable checklist template (e.g. "HVAC quarterly inspection"). */
+export async function createChecklistTemplate(
+  actor: SessionUser,
+  input: { code: string; nameEn: string; nameAr?: string; categoryId?: string; items: ChecklistItemInput[] },
+): Promise<{ id: string }> {
+  if (input.items.length === 0) throw validationError('A checklist template needs at least one item.');
+  const keys = new Set<string>();
+  for (const item of input.items) {
+    if (!item.key || !item.labelEn) throw validationError('Every checklist item needs a key and a label.');
+    if (keys.has(item.key)) throw validationError(`Duplicate checklist item key "${item.key}".`);
+    keys.add(item.key);
+  }
+  const db = await getDb();
+  return db.transaction(async (tx) => {
+    if (input.categoryId) {
+      const [c] = await tx
+        .select({ id: maintenanceCategories.id })
+        .from(maintenanceCategories)
+        .where(and(eq(maintenanceCategories.id, input.categoryId), eq(maintenanceCategories.organizationId, actor.organizationId)))
+        .limit(1);
+      if (!c) throw validationError('The selected category is not valid for this organization.');
+    }
+    const [existing] = await tx
+      .select({ id: maintenanceChecklistTemplates.id })
+      .from(maintenanceChecklistTemplates)
+      .where(and(eq(maintenanceChecklistTemplates.organizationId, actor.organizationId), eq(maintenanceChecklistTemplates.code, input.code)))
+      .limit(1);
+    if (existing) throw conflict(`A checklist template with code "${input.code}" already exists.`);
+
+    const [created] = await tx
+      .insert(maintenanceChecklistTemplates)
+      .values({
+        organizationId: actor.organizationId,
+        code: input.code,
+        nameEn: input.nameEn,
+        nameAr: input.nameAr ?? null,
+        categoryId: input.categoryId ?? null,
+        items: input.items,
+      })
+      .returning({ id: maintenanceChecklistTemplates.id });
+
+    await recordAudit(tx, {
+      organizationId: actor.organizationId,
+      action: 'create',
+      entityType: 'maintenance_checklist_template',
+      entityId: created.id,
+      entityLabel: input.nameEn,
+      newValue: { code: input.code, itemCount: input.items.length },
+      actor: { id: actor.id, fullName: actor.fullName },
+    });
+    return { id: created.id };
+  });
+}
+
+export async function listChecklistTemplates(organizationId: string) {
+  const db = await getDb();
+  return db
+    .select()
+    .from(maintenanceChecklistTemplates)
+    .where(and(eq(maintenanceChecklistTemplates.organizationId, organizationId), eq(maintenanceChecklistTemplates.isActive, true), isNull(maintenanceChecklistTemplates.deletedAt)))
+    .orderBy(asc(maintenanceChecklistTemplates.nameEn));
+}
+
+export async function getWorkOrderChecklistResults(organizationId: string, workOrderId: string) {
+  const db = await getDb();
+  return db
+    .select()
+    .from(workOrderChecklistResults)
+    .where(and(eq(workOrderChecklistResults.organizationId, organizationId), eq(workOrderChecklistResults.workOrderId, workOrderId)))
+    .orderBy(asc(workOrderChecklistResults.completedAt));
+}
+
+/**
+ * Records (or updates) one checklist item's result against a work order.
+ * Upserted by `(workOrderId, templateId, itemKey)` — re-submitting the same
+ * item never creates a duplicate row or a second corrective work order. A
+ * failing item whose template definition sets `createsCorrectiveOnFail`
+ * spawns exactly one linked corrective work order the first time it fails.
+ */
+export async function executeChecklistItem(
+  actor: SessionUser,
+  input: { workOrderId: string; templateId: string; itemKey: string; result: 'pass' | 'fail' | 'na'; notes?: string; documentId?: string },
+): Promise<{ id: string; correctiveWorkOrderId: string | null }> {
+  const db = await getDb();
+  // Policy is read outside the transaction (PGlite single-connection safety) —
+  // needed only if a corrective work order ends up being created below.
+  const policy = await getPolicy(actor.organizationId);
+
+  return db.transaction(async (tx) => {
+    const [wo] = await tx
+      .select({
+        id: workOrders.id,
+        code: workOrders.code,
+        propertyId: workOrders.propertyId,
+        buildingId: workOrders.buildingId,
+        unitId: workOrders.unitId,
+        assetId: workOrders.assetId,
+        categoryId: workOrders.categoryId,
+      })
+      .from(workOrders)
+      .where(and(eq(workOrders.id, input.workOrderId), eq(workOrders.organizationId, actor.organizationId), isNull(workOrders.deletedAt)))
+      .limit(1);
+    if (!wo) throw notFound('Work order', input.workOrderId);
+
+    const [template] = await tx
+      .select({ id: maintenanceChecklistTemplates.id, items: maintenanceChecklistTemplates.items })
+      .from(maintenanceChecklistTemplates)
+      .where(and(eq(maintenanceChecklistTemplates.id, input.templateId), eq(maintenanceChecklistTemplates.organizationId, actor.organizationId)))
+      .limit(1);
+    if (!template) throw notFound('Checklist template', input.templateId);
+    const itemDef = template.items.find((i) => i.key === input.itemKey);
+    if (!itemDef) throw validationError(`Unknown checklist item "${input.itemKey}" for this template.`);
+
+    const [existing] = await tx
+      .select({ id: workOrderChecklistResults.id, correctiveWorkOrderId: workOrderChecklistResults.correctiveWorkOrderId })
+      .from(workOrderChecklistResults)
+      .where(
+        and(
+          eq(workOrderChecklistResults.workOrderId, input.workOrderId),
+          eq(workOrderChecklistResults.templateId, input.templateId),
+          eq(workOrderChecklistResults.itemKey, input.itemKey),
+        ),
+      )
+      .limit(1);
+
+    let correctiveWorkOrderId: string | null = existing?.correctiveWorkOrderId ?? null;
+    if (input.result === 'fail' && itemDef.createsCorrectiveOnFail && !correctiveWorkOrderId) {
+      const sla = policy.maintenanceSlaByPriority.high ?? { responseHours: 8, resolutionHours: 24 };
+      const corrective = await createWorkOrderInTx(
+        tx,
+        actor,
+        {
+          title: `Corrective: ${itemDef.labelEn} (from ${wo.code})`,
+          description: `Auto-created from a failed checklist item "${itemDef.labelEn}" on work order ${wo.code}.`,
+          maintenanceType: 'corrective',
+          categoryId: wo.categoryId ?? undefined,
+          propertyId: wo.propertyId,
+          buildingId: wo.buildingId ?? undefined,
+          unitId: wo.unitId ?? undefined,
+          assetId: wo.assetId ?? undefined,
+          priority: 'high',
+        },
+        sla,
+      );
+      correctiveWorkOrderId = corrective.id;
+    }
+
+    let resultId: string;
+    if (existing) {
+      await tx
+        .update(workOrderChecklistResults)
+        .set({
+          result: input.result,
+          notes: input.notes ?? null,
+          documentId: input.documentId ?? null,
+          correctiveWorkOrderId,
+          completedByUserId: actor.id,
+          completedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(workOrderChecklistResults.id, existing.id));
+      resultId = existing.id;
+    } else {
+      const [created] = await tx
+        .insert(workOrderChecklistResults)
+        .values({
+          organizationId: actor.organizationId,
+          workOrderId: input.workOrderId,
+          templateId: input.templateId,
+          itemKey: input.itemKey,
+          itemLabelEn: itemDef.labelEn,
+          result: input.result,
+          notes: input.notes ?? null,
+          documentId: input.documentId ?? null,
+          correctiveWorkOrderId,
+          completedByUserId: actor.id,
+        })
+        .returning({ id: workOrderChecklistResults.id });
+      resultId = created.id;
+    }
+
+    await recordAudit(tx, {
+      organizationId: actor.organizationId,
+      action: existing ? 'update' : 'create',
+      entityType: 'work_order_checklist_result',
+      entityId: resultId,
+      entityLabel: `${wo.code}: ${itemDef.labelEn}`,
+      newValue: { result: input.result, correctiveWorkOrderId },
+      actor: { id: actor.id, fullName: actor.fullName },
+    });
+
+    return { id: resultId, correctiveWorkOrderId };
+  });
 }
 
 /* -------------------------------------------------------------------------- */

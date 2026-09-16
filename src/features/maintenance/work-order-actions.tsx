@@ -25,17 +25,28 @@ import type { ActionResult } from '@/lib/errors';
 
 const TRANSITIONS: Record<string, string[]> = {
   open: ['in_progress', 'cancelled'],
-  assigned: ['in_progress', 'pending', 'cancelled'],
-  in_progress: ['pending', 'completed', 'cancelled'],
+  assigned: ['in_progress', 'pending', 'on_hold', 'cancelled'],
+  in_progress: ['pending', 'on_hold', 'completed', 'cancelled'],
   pending: ['in_progress', 'completed', 'cancelled'],
-  completed: [],
+  completed: ['verified'],
   cancelled: [],
+  draft: ['submitted', 'cancelled'],
+  submitted: ['approved', 'cancelled'],
+  approved: ['assigned', 'cancelled'],
+  on_hold: ['in_progress', 'completed', 'cancelled'],
+  verified: ['closed'],
+  closed: [],
 };
 
 const STATUS_META: Record<string, { label: string; icon: React.ReactNode; variant: 'primary' | 'secondary' }> = {
+  submitted: { label: 'Submit', icon: <PlayCircle />, variant: 'primary' },
+  approved: { label: 'Approve', icon: <CheckCircle2 />, variant: 'primary' },
   in_progress: { label: 'Start Work', icon: <PlayCircle />, variant: 'primary' },
   pending: { label: 'Mark Pending', icon: <PauseCircle />, variant: 'secondary' },
+  on_hold: { label: 'Put On Hold', icon: <PauseCircle />, variant: 'secondary' },
   completed: { label: 'Complete', icon: <CheckCircle2 />, variant: 'primary' },
+  verified: { label: 'Verify', icon: <CheckCircle2 />, variant: 'primary' },
+  closed: { label: 'Close', icon: <CheckCircle2 />, variant: 'secondary' },
   cancelled: { label: 'Cancel', icon: <Ban />, variant: 'secondary' },
 };
 
