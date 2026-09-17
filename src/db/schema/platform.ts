@@ -407,17 +407,30 @@ export const importBatches = pgTable(
       .references(() => organizations.id, { onDelete: 'cascade' }),
     entityType: varchar('entity_type', { length: 48 }).notNull(),
     fileName: varchar('file_name', { length: 260 }).notNull(),
-    /** uploaded | validated | imported | failed | rolled_back */
+    /** xlsx | csv (Phase 20A). */
+    fileType: varchar('file_type', { length: 8 }),
+    /** create_only | update_existing | create_and_update (Phase 20A). */
+    mode: varchar('mode', { length: 24 }).notNull().default('create_only'),
+    /** uploaded | validating | ready | importing | completed | completed_with_errors | failed | rolled_back */
     status: varchar('status', { length: 24 }).notNull().default('uploaded'),
     totalRows: integer('total_rows').notNull().default(0),
     validRows: integer('valid_rows').notNull().default(0),
     invalidRows: integer('invalid_rows').notNull().default(0),
     duplicateRows: integer('duplicate_rows').notNull().default(0),
     importedRows: integer('imported_rows').notNull().default(0),
+    /** Rows updated in-place (Phase 20A — update_existing/create_and_update modes). */
+    updatedRows: integer('updated_rows').notNull().default(0),
+    /** Rows deliberately not written, e.g. an existing code under create_only (Phase 20A). */
+    skippedRows: integer('skipped_rows').notNull().default(0),
+    /** Rows imported with a non-fatal warning (Phase 20A). */
+    warningRows: integer('warning_rows').notNull().default(0),
     /** IDs created by this batch, enabling rollback. */
     createdEntityIds: jsonb('created_entity_ids').$type<string[]>().notNull().default([]),
+    startedAt: timestamp('started_at', { withTimezone: true }),
     importedAt: timestamp('imported_at', { withTimezone: true }),
     rolledBackAt: timestamp('rolled_back_at', { withTimezone: true }),
+    /** Short human-readable summary of a fatal failure (Phase 20A). */
+    errorSummary: text('error_summary'),
     userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
     ...timestamps,
   },

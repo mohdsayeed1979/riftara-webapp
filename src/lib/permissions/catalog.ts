@@ -87,9 +87,9 @@ function define(module: Module, actions: Action[], nouns: string): PermissionDef
 
 export const PERMISSIONS: PermissionDefinition[] = [
   ...define('dashboard', ['view', 'export'], 'executive dashboards'),
-  ...define('properties', ['view', 'create', 'edit', 'delete', 'export', 'publish'], 'properties'),
+  ...define('properties', ['view', 'create', 'edit', 'delete', 'export', 'publish', 'manage'], 'properties'),
   ...define('buildings', ['view', 'create', 'edit', 'delete'], 'buildings and floors'),
-  ...define('units', ['view', 'create', 'edit', 'delete', 'export', 'publish'], 'units'),
+  ...define('units', ['view', 'create', 'edit', 'delete', 'export', 'publish', 'manage'], 'units'),
   ...define('pricing', ['view', 'edit', 'approve'], 'unit pricing'),
   ...define('leasing', ['view', 'create', 'edit', 'delete', 'export'], 'leads and the CRM pipeline'),
   ...define('customers', ['view', 'create', 'edit', 'delete', 'export'], 'customers'),

@@ -50,6 +50,13 @@
       "when": 1789557811459,
       "tag": "0006_military_quentin_quire",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1789655260789,
+      "tag": "0007_yielding_ricochet",
+      "breakpoints": true
     }
   ]
 }

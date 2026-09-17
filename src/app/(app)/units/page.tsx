@@ -9,6 +9,7 @@ import { EmptyState } from '@/components/ui/misc';
 import { KpiGrid, PageHeader } from '@/components/ui/page';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Pagination, Table, TableContainer, TBody, TD, TH, THead, TR } from '@/components/ui/table';
+import { ImportWizard } from '@/features/imports/import-wizard';
 import { can, requirePermission } from '@/lib/auth/guard';
 import { formatArea, formatCompactCurrency, formatCurrency, formatDate } from '@/lib/format';
 import { getRequestLocale } from '@/lib/locale';
@@ -90,6 +91,7 @@ export default async function UnitsPage({
                 </a>
               </Button>
             ) : null}
+            {can(user, 'units:manage') ? <ImportWizard kind="units" /> : null}
           </>
         }
       />

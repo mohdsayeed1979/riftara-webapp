@@ -11,6 +11,7 @@ import { PropertyImage } from '@/components/ui/property-image';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Pagination, Table, TableContainer, TBody, TD, TH, THead, TR } from '@/components/ui/table';
 import { PropertyActions } from '@/features/properties/property-actions';
+import { ImportWizard } from '@/features/imports/import-wizard';
 import { can, requirePermission } from '@/lib/auth/guard';
 import { formatCompactCurrency, formatPercent } from '@/lib/format';
 import { getRequestLocale, getRequestLocationId } from '@/lib/locale';
@@ -91,6 +92,7 @@ export default async function PropertiesPage({
                 </a>
               </Button>
             ) : null}
+            {can(user, 'properties:manage') ? <ImportWizard kind="properties" /> : null}
             <Button variant="secondary" asChild>
               <Link href="/properties/map">
                 <MapPin />
